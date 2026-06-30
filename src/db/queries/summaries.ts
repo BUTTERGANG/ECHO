@@ -16,6 +16,11 @@ export async function createSummary(input: CreateSummaryInput): Promise<AiSummar
   return created;
 }
 
+/** All summaries, newest first (used by data export). */
+export async function getAllSummaries(): Promise<AiSummary[]> {
+  return db.select().from(aiSummaries).orderBy(desc(aiSummaries.createdAt));
+}
+
 /** Most recent summary for an entry (summaries can be regenerated). */
 export async function getSummaryByEntryId(entryId: string): Promise<AiSummary | undefined> {
   const [row] = await db

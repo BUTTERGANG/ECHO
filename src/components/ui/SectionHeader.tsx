@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '@/hooks/use-theme';
 
@@ -13,9 +13,13 @@ export function SectionHeader({ title, action }: Props) {
     <View style={styles.row}>
       <Text style={[styles.title, { color: theme.textSecondary }]}>{title.toUpperCase()}</Text>
       {action ? (
-        <Text style={[styles.action, { color: theme.accent }]} onPress={action.onPress}>
-          {action.label}
-        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={action.label}
+          hitSlop={8}
+          onPress={action.onPress}>
+          <Text style={[styles.action, { color: theme.accent }]}>{action.label}</Text>
+        </Pressable>
       ) : null}
     </View>
   );

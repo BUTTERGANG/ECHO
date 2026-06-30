@@ -6,7 +6,7 @@ import { EntryCard } from '@/components/EntryCard';
 import { StreakBadge } from '@/components/StreakBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Screen } from '@/components/ui/Screen';
-import { Radii } from '@/constants/theme';
+import { MaxContentWidth, Radii } from '@/constants/theme';
 import { useEntries } from '@/hooks/useEntries';
 import { useResponsive } from '@/hooks/useResponsive';
 import { useStreak } from '@/hooks/useStreak';
@@ -22,9 +22,9 @@ function greeting(): string {
 export default function HomeScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { entries, loading, refresh } = useEntries();
+  const { entries, loading, error, refresh } = useEntries();
   const streak = useStreak();
-  const { columns } = useResponsive();
+  const { columns, gutter } = useResponsive();
 
   return (
     <Screen padded={false}>
@@ -34,7 +34,7 @@ export default function HomeScreen() {
         keyExtractor={(e) => e.id}
         numColumns={columns}
         columnWrapperStyle={columns > 1 ? styles.columnWrap : undefined}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingHorizontal: gutter }]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           <View style={styles.header}>
@@ -52,7 +52,14 @@ export default function HomeScreen() {
         )}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={theme.textSecondary} />}
         ListEmptyComponent={
-          loading ? null : (
+          loading ? null : error ? (
+            <EmptyState
+              icon="alert-circle-outline"
+              title="Couldn’t load your entries"
+              subtitle={error}
+              action={{ label: 'Retry', icon: 'refresh', onPress: refresh }}
+            />
+          ) : (
             <EmptyState
               icon="mic-outline"
               title="No entries yet"
@@ -75,7 +82,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  list: { padding: 16, gap: 12, flexGrow: 1 },
+  list: { paddingVertical: 16, gap: 12, flexGrow: 1, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
   columnWrap: { gap: 12 },
   gridItem: { flex: 1 },
   header: {

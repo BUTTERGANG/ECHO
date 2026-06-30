@@ -77,3 +77,8 @@ export async function deleteAudio(key: string | null | undefined): Promise<void>
   if (!isAudioKey(key)) return;
   await tx('readwrite', (s) => s.delete(key));
 }
+
+/** Delete every stored audio blob (used by delete-all-data). */
+export async function clearAllAudio(): Promise<void> {
+  await tx('readwrite', (s) => s.clear());
+}

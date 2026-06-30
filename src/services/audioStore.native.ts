@@ -31,3 +31,7 @@ export async function getAudioObjectURL(_key: string | null | undefined): Promis
 export async function deleteAudio(_key: string | null | undefined): Promise<void> {
   /* no-op until native is implemented */
 }
+
+export async function clearAllAudio(): Promise<void> {
+  /* no-op until native is implemented */
+}

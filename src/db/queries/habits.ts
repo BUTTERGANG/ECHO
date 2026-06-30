@@ -52,6 +52,16 @@ export async function getHabitLogsForDate(date: string): Promise<HabitLog[]> {
   return db.select().from(habitLogs).where(eq(habitLogs.date, date));
 }
 
+/** Every habit log (used by data export). */
+export async function getAllHabitLogs(): Promise<HabitLog[]> {
+  return db.select().from(habitLogs);
+}
+
+/** Logs for one habit across all dates (used for per-habit streaks). */
+export async function getHabitLogs(habitId: string): Promise<HabitLog[]> {
+  return db.select().from(habitLogs).where(eq(habitLogs.habitId, habitId));
+}
+
 export async function getHabitLog(habitId: string, date: string): Promise<HabitLog | undefined> {
   const [row] = await db
     .select()

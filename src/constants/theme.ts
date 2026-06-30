@@ -17,7 +17,8 @@ export const Colors = {
     // ECHO semantic tokens
     card: '#FFFFFF',
     border: '#E6E8EC',
-    accent: '#4F7CFF',
+    // Darkened from #4F7CFF so white-on-accent and accent-colored text meet WCAG AA.
+    accent: '#3A63E8',
     accentText: '#FFFFFF',
     accentSoft: '#EAF0FF',
     danger: '#E5484D',

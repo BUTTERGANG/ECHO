@@ -30,12 +30,14 @@ export default function ComposeScreen() {
   const [mood, setMood] = useState<number | null>(null);
   const [isPrivate, setIsPrivate] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const canSave = text.trim().length > 0 && !saving;
 
   const onSave = async () => {
     if (!canSave) return;
     setSaving(true);
+    setError(null);
     try {
       const entry = await createEntry({
         transcript: text.trim(),
@@ -46,6 +48,8 @@ export default function ComposeScreen() {
       // Fire-and-forget; summary appears on next view of the entry.
       void maybeSummarizeEntry(entry, aiEnabled);
       router.back();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save your entry. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -85,6 +89,8 @@ export default function ComposeScreen() {
           <Switch value={isPrivate} onValueChange={setIsPrivate} />
         </View>
 
+        {error ? <Text style={[styles.error, { color: theme.danger }]}>{error}</Text> : null}
+
         <View style={styles.actions}>
           <Button label="Cancel" variant="ghost" onPress={() => router.back()} />
           <Button label="Save entry" icon="checkmark" onPress={onSave} loading={saving} disabled={!canSave} />
@@ -117,5 +123,6 @@ const styles = StyleSheet.create({
   },
   privateLabel: { fontSize: 16, fontWeight: '600' },
   privateHint: { fontSize: 13, marginTop: 2 },
-  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 28 },
+  error: { fontSize: 14, lineHeight: 20, marginTop: 20 },
+  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 16 },
 });

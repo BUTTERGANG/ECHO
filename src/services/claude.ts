@@ -15,10 +15,16 @@
 import { Platform } from 'react-native';
 
 import { Config } from '@/constants/config';
-import { ENTRY_SUMMARY_PROMPT_VERSION, ENTRY_SUMMARY_SYSTEM } from '@/constants/prompts';
+import {
+  ENTRY_SUMMARY_PROMPT_VERSION,
+  ENTRY_SUMMARY_SYSTEM,
+  WEEKLY_REVIEW_PROMPT_VERSION,
+  WEEKLY_REVIEW_SYSTEM,
+} from '@/constants/prompts';
 
-/** Same-origin proxy endpoint served by server/index.mjs. */
+/** Same-origin proxy endpoints served by server/index.mjs. */
 const PROXY_PATH = '/api/anthropic/summary';
+const WEEKLY_PROXY_PATH = '/api/anthropic/weekly';
 
 export interface EntrySummary {
   whatSaid: string;
@@ -119,4 +125,80 @@ export async function generateEntrySummary(transcript: string): Promise<EntrySum
     };
   }
   throw new Error('Claude API overloaded (529) after retry.');
+}
+
+export interface WeeklyReview {
+  summary: string;
+  topThemes: string[];
+  carryForward: string;
+}
+
+export interface WeeklyReviewResult {
+  review: WeeklyReview;
+  model: string;
+  promptVersion: string;
+  raw: string;
+}
+
+function parseWeeklyReview(text: string): WeeklyReview {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  const json = start >= 0 && end > start ? text.slice(start, end + 1) : text;
+  const parsed = JSON.parse(json);
+  return {
+    summary: String(parsed.summary ?? ''),
+    topThemes: Array.isArray(parsed.top_themes) ? parsed.top_themes.map(String) : [],
+    carryForward: String(parsed.carry_forward ?? ''),
+  };
+}
+
+/** Web: hit the weekly proxy. Native: hit Anthropic directly. */
+async function sendWeeklyRequest(entries: string[]): Promise<Response> {
+  if (Platform.OS === 'web') {
+    return fetch(WEEKLY_PROXY_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    });
+  }
+
+  if (!Config.anthropic.apiKey) {
+    throw new ClaudeDisabledError('No Anthropic API key configured for native dev.');
+  }
+  const composed = entries.map((t, i) => `Entry ${i + 1}:\n${t}`).join('\n\n');
+  return fetch(Config.anthropic.baseUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': Config.anthropic.apiKey,
+      'anthropic-version': Config.anthropic.version,
+    },
+    body: JSON.stringify({
+      model: Config.anthropic.model,
+      max_tokens: Config.anthropic.maxTokens.weeklyReview,
+      system: WEEKLY_REVIEW_SYSTEM,
+      messages: [
+        { role: 'user', content: `Here are my journal entries from the past week:\n\n${composed}` },
+      ],
+    }),
+  });
+}
+
+/** Generate a weekly review narrative from a week's worth of transcripts. */
+export async function generateWeeklyReview(entries: string[]): Promise<WeeklyReviewResult> {
+  const res = await sendWeeklyRequest(entries);
+  if (res.status === 401) throw new ClaudeAuthError('Anthropic API key rejected (401).');
+  if (res.status === 503) {
+    throw new ClaudeDisabledError('AI summaries are not configured on the server.');
+  }
+  if (!res.ok) throw new Error(`Weekly review failed ${res.status}: ${await res.text()}`);
+
+  const data = await res.json();
+  const raw = extractText(data);
+  return {
+    review: parseWeeklyReview(raw),
+    model: Config.anthropic.model,
+    promptVersion: WEEKLY_REVIEW_PROMPT_VERSION,
+    raw,
+  };
 }

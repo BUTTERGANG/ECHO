@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
@@ -60,9 +60,14 @@ export default function OnboardingScreen() {
         </View>
         <Button label={last ? 'Get started' : 'Next'} onPress={next} fullWidth size="lg" />
         {!last ? (
-          <Text style={[styles.skip, { color: theme.textSecondary }]} onPress={() => router.back()}>
-            Skip
-          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Skip onboarding"
+            hitSlop={8}
+            onPress={() => router.back()}
+            style={styles.skip}>
+            <Text style={[styles.skipText, { color: theme.textSecondary }]}>Skip</Text>
+          </Pressable>
         ) : null}
       </View>
     </Screen>
@@ -79,5 +84,6 @@ const styles = StyleSheet.create({
   dots: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: Radii.pill },
   dotActive: { width: 22 },
-  skip: { textAlign: 'center', fontSize: 15, fontWeight: '500', paddingVertical: 4 },
+  skip: { alignSelf: 'center', paddingVertical: 8, paddingHorizontal: 16 },
+  skipText: { textAlign: 'center', fontSize: 15, fontWeight: '500' },
 });

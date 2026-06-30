@@ -48,6 +48,18 @@ The JSON must have exactly these three fields:
 
 Keep each field under 100 words. Never fabricate details not present in the transcript.`;
 
+// IMPORTANT: keep in sync with src/constants/prompts.ts → WEEKLY_REVIEW_SYSTEM (v1.0).
+const WEEKLY_REVIEW_SYSTEM = `You are a thoughtful journaling companion generating a private weekly review for the user.
+
+You will receive a week's worth of journal entries and some summary statistics.
+
+Respond ONLY with a JSON object with these fields:
+- "summary": A 3-5 sentence narrative of the week. What was the general arc? What were the highs and lows? Written in second person ("You spent this week..."). Warm but grounded — not falsely positive.
+- "top_themes": Array of 2-4 short theme strings that defined the week.
+- "carry_forward": One thing worth paying attention to in the coming week, based on what's present in the entries. Must be specific to their actual content.
+
+Keep the summary under 200 words. Do not fabricate. Do not repeat generic affirmations.`;
+
 const app = express();
 app.disable('x-powered-by');
 app.use(compression());
@@ -111,6 +123,52 @@ app.post('/api/anthropic/summary', async (req, res) => {
       }),
     });
     // Pass the Anthropic response through verbatim; the client parses it.
+    const text = await upstream.text();
+    res.status(upstream.status).type('application/json').send(text);
+  } catch {
+    res.status(502).json({ error: 'Upstream AI request failed.' });
+  }
+});
+
+// (3b) Claude weekly-review proxy. Client sends only { entries: string[] }.
+app.post('/api/anthropic/weekly', async (req, res) => {
+  if (!ANTHROPIC_API_KEY) return res.status(503).json({ error: 'AI summaries are not configured.' });
+
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGIN && origin && origin !== ALLOWED_ORIGIN) {
+    return res.status(403).json({ error: 'Forbidden origin.' });
+  }
+
+  const ip = (req.headers['x-forwarded-for']?.toString().split(',')[0] || req.ip || 'unknown').trim();
+  if (rateLimited(ip)) return res.status(429).json({ error: 'Too many requests.' });
+
+  const list = Array.isArray(req.body?.entries) ? req.body.entries : [];
+  const texts = list
+    .map((t) => (t ?? '').toString().trim())
+    .filter(Boolean)
+    .slice(0, 50);
+  if (texts.length === 0) return res.status(400).json({ error: 'entries are required.' });
+
+  let composed = texts.map((t, i) => `Entry ${i + 1}:\n${t}`).join('\n\n');
+  if (composed.length > MAX_TRANSCRIPT_CHARS * 3) composed = composed.slice(0, MAX_TRANSCRIPT_CHARS * 3);
+
+  try {
+    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODEL,
+        max_tokens: 1500,
+        system: WEEKLY_REVIEW_SYSTEM,
+        messages: [
+          { role: 'user', content: `Here are my journal entries from the past week:\n\n${composed}` },
+        ],
+      }),
+    });
     const text = await upstream.text();
     res.status(upstream.status).type('application/json').send(text);
   } catch {

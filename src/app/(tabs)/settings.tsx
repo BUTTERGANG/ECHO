@@ -7,10 +7,13 @@ import { Screen } from '@/components/ui/Screen';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { WHISPER_MODELS } from '@/constants/config';
 import { Radii } from '@/constants/theme';
+import { deleteAllData } from '@/db/queries/admin';
 import { decryptAllTranscripts } from '@/db/queries/entries';
 import { useTheme } from '@/hooks/use-theme';
+import { clearAllAudio } from '@/services/audioStore';
 import { exportAllData } from '@/services/export';
 import { disableEncryption, lock } from '@/services/vault';
+import { useEntryStore } from '@/stores/entryStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useVaultStore } from '@/stores/vaultStore';
 
@@ -51,20 +54,39 @@ export default function SettingsScreen() {
     setWhisperModel,
   } = useSettingsStore();
 
+  const setEntries = useEntryStore((s) => s.setEntries);
+
   const onExport = async () => {
     try {
-      const path = await exportAllData();
-      Alert.alert('Export complete', path);
+      const fileName = await exportAllData();
+      Alert.alert('Export complete', `Your data was downloaded as ${fileName}.`);
     } catch (e) {
-      Alert.alert('Export', e instanceof Error ? e.message : String(e));
+      Alert.alert('Export failed', e instanceof Error ? e.message : String(e));
     }
   };
 
   const confirmDelete = () =>
-    Alert.alert('Delete all data?', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => Alert.alert('Not yet', 'Delete-all lands in Step 10/11.') },
-    ]);
+    Alert.alert(
+      'Delete all data?',
+      'This permanently erases every entry, summary, habit, and recording on this device. It cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete everything',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAllData();
+              await clearAllAudio();
+              setEntries([]);
+              Alert.alert('Deleted', 'All of your data has been erased from this device.');
+            } catch (e) {
+              Alert.alert('Delete failed', e instanceof Error ? e.message : String(e));
+            }
+          },
+        },
+      ],
+    );
 
   const vaultStatus = useVaultStore((s) => s.status);
   const encryptionEnabled = vaultStatus !== 'disabled';
@@ -106,7 +128,7 @@ export default function SettingsScreen() {
         <View style={[styles.divider, { backgroundColor: theme.border }]} />
         <ToggleRow
           label="Encrypted sync"
-          hint="Phase 3 — not yet available."
+          hint="Coming soon."
           value={syncEnabled}
           onValueChange={setSyncEnabled}
           disabled
@@ -130,7 +152,11 @@ export default function SettingsScreen() {
             {vaultStatus === 'unlocked' ? (
               <>
                 <View style={[styles.divider, { backgroundColor: theme.border }]} />
-                <Pressable style={styles.actionRow} onPress={() => lock()}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Lock now"
+                  style={styles.actionRow}
+                  onPress={() => lock()}>
                   <Ionicons name="lock-closed-outline" size={20} color={theme.accent} />
                   <Text style={[styles.actionLabel, { color: theme.text }]}>Lock now</Text>
                   <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
@@ -152,6 +178,9 @@ export default function SettingsScreen() {
           return (
             <Pressable
               key={m}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              accessibilityLabel={`Transcription model ${m}`}
               onPress={() => setWhisperModel(m)}
               style={[
                 styles.segmentItem,
@@ -170,13 +199,21 @@ export default function SettingsScreen() {
 
       <SectionHeader title="Your data" />
       <Card padded={false} style={styles.group}>
-        <Pressable style={styles.actionRow} onPress={onExport}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Export all data"
+          style={styles.actionRow}
+          onPress={onExport}>
           <Ionicons name="download-outline" size={20} color={theme.accent} />
           <Text style={[styles.actionLabel, { color: theme.text }]}>Export all data</Text>
           <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
         </Pressable>
         <View style={[styles.divider, { backgroundColor: theme.border }]} />
-        <Pressable style={styles.actionRow} onPress={confirmDelete}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Delete all data"
+          style={styles.actionRow}
+          onPress={confirmDelete}>
           <Ionicons name="trash-outline" size={20} color={theme.danger} />
           <Text style={[styles.actionLabel, { color: theme.danger }]}>Delete all data</Text>
           <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
@@ -185,13 +222,17 @@ export default function SettingsScreen() {
 
       <SectionHeader title="About" />
       <Card padded={false} style={styles.group}>
-        <Pressable style={styles.actionRow} onPress={() => router.push('/onboarding')}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="How ECHO works"
+          style={styles.actionRow}
+          onPress={() => router.push('/onboarding')}>
           <Ionicons name="information-circle-outline" size={20} color={theme.accent} />
           <Text style={[styles.actionLabel, { color: theme.text }]}>How ECHO works</Text>
           <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
         </Pressable>
       </Card>
-      <Text style={[styles.version, { color: theme.textSecondary }]}>ECHO • Phase 1 • v0.1.0</Text>
+      <Text style={[styles.version, { color: theme.textSecondary }]}>ECHO v1.0.0</Text>
     </Screen>
   );
 }

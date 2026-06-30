@@ -31,7 +31,16 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+!.env.example
+
+# ECHO: downloaded Whisper models (large binaries, fetched at runtime)
+/assets/whisper-models/*
+!/assets/whisper-models/.gitkeep
+
+# ECHO: local data exports
+/src/db/echo.db
 
 # typescript
 *.tsbuildinfo

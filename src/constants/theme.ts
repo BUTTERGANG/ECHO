@@ -14,6 +14,16 @@ export const Colors = {
     backgroundElement: '#F0F0F3',
     backgroundSelected: '#E0E1E6',
     textSecondary: '#60646C',
+    // ECHO semantic tokens
+    card: '#FFFFFF',
+    border: '#E6E8EC',
+    accent: '#4F7CFF',
+    accentText: '#FFFFFF',
+    accentSoft: '#EAF0FF',
+    danger: '#E5484D',
+    success: '#46A758',
+    warning: '#F2A33C',
+    overlay: 'rgba(17,20,28,0.45)',
   },
   dark: {
     text: '#ffffff',
@@ -21,7 +31,35 @@ export const Colors = {
     backgroundElement: '#212225',
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
+    // ECHO semantic tokens
+    card: '#161719',
+    border: '#2A2C30',
+    accent: '#6E8BFF',
+    accentText: '#0B0D12',
+    accentSoft: '#1B2030',
+    danger: '#F2555A',
+    success: '#5BB372',
+    warning: '#F5B95A',
+    overlay: 'rgba(0,0,0,0.6)',
   },
+} as const;
+
+/** Mood score (1–5) → color, shared light/dark. */
+export const MoodColors = ['#9AA0A6', '#E5675F', '#E8A04D', '#E6C84F', '#8FBF63', '#5BB372'] as const;
+export const MoodEmoji = ['', '😞', '😕', '😐', '🙂', '😄'] as const;
+
+export const Radii = {
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  pill: 999,
+} as const;
+
+/** Width breakpoints (px). */
+export const Breakpoints = {
+  tablet: 600,
+  desktop: 1024,
 } as const;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;

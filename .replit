@@ -1,0 +1,28 @@
+# Replit configuration for ECHO.
+# Autoscale deployment: a stateless Node server serves the Expo web SPA with
+# the cross-origin-isolation headers wa-sqlite needs, plus the Claude proxy.
+
+modules = ["nodejs-22"]
+
+# Local dev inside the Repl: build once, then serve.
+run = "npm run deploy:local"
+
+[env]
+PORT = "3000"
+
+[deployment]
+deploymentTarget = "autoscale"
+build = ["sh", "-c", "npm ci && npm run build:web"]
+run = ["sh", "-c", "npm run serve"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+# Required Deployment Secrets (set in the Replit "Secrets" / deployment env,
+# NOT committed, NOT EXPO_PUBLIC_*):
+#   ANTHROPIC_API_KEY   - server-side Claude key (never reaches the client)
+# Optional:
+#   ANTHROPIC_MODEL     - defaults to claude-sonnet-4-6
+#   ALLOWED_ORIGIN      - e.g. https://<your-deployment>.replit.app  (locks the proxy)
+#   COEP_POLICY         - require-corp (default) | credentialless (if HF model fetch is blocked)

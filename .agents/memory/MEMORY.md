@@ -1,0 +1,1 @@
+- [expo-sqlite web COI setup](expo-sqlite-web-coi.md) — SharedArrayBuffer needs COOP+COEP; workflow must run on port 5000; COI SW + auto-retry handles Replit preview iframe context.

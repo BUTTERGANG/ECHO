@@ -36,14 +36,34 @@ layer — ideal for Autoscale (scale-to-zero, no shared filesystem needed).
   that exercises the cross-origin model fetch — watch the browser console.
 
 ## Known risks / watch items
+- **`openDatabaseSync` on web can throw `Error: Sync operation timeout` on
+  app boot, producing a black screen.** `src/db/client.ts` calls
+  `openDatabaseSync` at module load. On web, `expo-sqlite` fakes "sync" by
+  busy-waiting on the main thread (`Atomics.pause()`, capped at a fixed
+  iteration count — see `node_modules/expo-sqlite/web/WorkerChannel.ts`)
+  for a Web Worker to finish WASM init + OPFS pool setup
+  (`AccessHandlePoolVFS`), which can easily exceed that budget on a cold
+  start. **This isn't just an open-time risk** — `drizzle-orm/expo-sqlite`'s
+  driver is sync-only, so *every* query on web goes through this same
+  busy-wait for the app's lifetime. Patched via `patches/expo-sqlite+56.0.5.patch`
+  (raises the iteration cap ~100x; applied automatically by `postinstall`).
+  Expo's own SDK 56 docs flag `expo-sqlite` web support as alpha/"may be
+  unstable" — if this resurfaces after an expo-sqlite upgrade, re-check
+  `WorkerChannel.ts` and regenerate the patch. The real fix would be moving
+  web off the sync driver entirely (`openDatabaseAsync` + an async query
+  path); that's a larger change, not done here.
+- **COEP default is `credentialless`, not `require-corp`.** Expo SDK 56's
+  `expo-sqlite` web docs (https://docs.expo.dev/versions/v56.0.0/sdk/sqlite/)
+  specify `credentialless` for the COEP header that enables SharedArrayBuffer
+  for the wa-sqlite worker. `credentialless` has been supported in Firefox
+  since 119 and Safari since 17.4, so it's no longer Chromium-only. It also
+  happens to fix the Whisper model fetch below. If you override to
+  `require-corp`, **retest app load**, not just voice transcription.
 - **COEP vs the Whisper model download.** transformers.js (the library) loads from
   the jsdelivr CDN, which sends `Cross-Origin-Resource-Policy: cross-origin` — so it
-  loads fine under `require-corp`. The **model weights** come from the HuggingFace
-  CDN and are the one unavoidable cross-origin fetch; if transcription fails to load
-  the model (check the browser console), set `COEP_POLICY=credentialless` (Chromium
-  only) or self-host the model. **Test voice transcription on the deployed URL.**
-  Note: `credentialless` is Chromium-only — if you set it, confirm wa-sqlite still
-  works in Firefox/Safari (it relies on the same cross-origin isolation).
+  loads fine either way. The **model weights** come from the HuggingFace CDN and are
+  the one unavoidable cross-origin fetch; under `credentialless` (the default) this
+  works without special-casing. **Test voice transcription on the deployed URL.**
 - **transformers.js is loaded at runtime, not bundled** (its onnxruntime dep can't
   be Metro-bundled — see WEB_FIRST_NOTES.md). The npm package was therefore removed
   from `dependencies`, so `npm ci` no longer installs `onnxruntime-node` + `sharp`

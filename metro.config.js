@@ -18,10 +18,13 @@ config.resolver.sourceExts.push('sql');
 
 // Add the cross-origin isolation headers the dev server needs for
 // SharedArrayBuffer. EAS/production hosting must set the same headers.
+// credentialless (not require-corp) is what SDK 56's expo-sqlite web docs
+// specify: https://docs.expo.dev/versions/v56.0.0/sdk/sqlite/ — keep this in
+// sync with server/index.mjs's COEP_POLICY default.
 config.server.enhanceMiddleware = (middleware) => {
   return (req, res, next) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
     middleware(req, res, next);
   };
 };

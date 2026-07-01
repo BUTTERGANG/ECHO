@@ -16,6 +16,7 @@
  */
 import compression from 'compression';
 import express from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,10 +24,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.join(__dirname, '..', 'dist');
 
 const PORT = Number(process.env.PORT) || 3000;
-// require-corp is the broadest cross-origin-isolation mode. If the Whisper
-// model download from the HuggingFace CDN is blocked by it, set
-// COEP_POLICY=credentialless (Chromium) or self-host the model.
-const COEP_POLICY = process.env.COEP_POLICY || 'require-corp';
+// Expo SDK 56's expo-sqlite web docs specify credentialless, not require-corp,
+// for the COEP header that enables SharedArrayBuffer for the wa-sqlite worker:
+// https://docs.expo.dev/versions/v56.0.0/sdk/sqlite/. require-corp also has
+// the side effect of blocking the Whisper model fetch from the HuggingFace CDN
+// (see DEPLOY.md). credentialless has been supported in Firefox since 119 and
+// Safari since 17.4, so it's no longer the Chromium-only fallback it once was.
+const COEP_POLICY = process.env.COEP_POLICY || 'credentialless';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || ''; // e.g. https://echo.replit.app
@@ -70,6 +74,15 @@ app.use((_req, res, next) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', COEP_POLICY);
   next();
+});
+
+// COI service worker — served without CORP headers so the SW can install
+// itself even before cross-origin isolation is active.
+const COI_SW_PATH = path.join(__dirname, 'coi-serviceworker.js');
+app.get('/coi-serviceworker.js', (_req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(COI_SW_PATH);
 });
 
 // (4) Health check.
@@ -191,13 +204,108 @@ app.use(
   }),
 );
 
+// COI service worker registration snippet — injected into every HTML response
+// so that SharedArrayBuffer is available even inside Replit's preview iframe
+// (where the parent frame is not cross-origin isolated).
+//
+// Guards against infinite reload: sessionStorage tracks whether we've already
+// reloaded once after SW activation. If crossOriginIsolated is still false
+// after that reload, the parent context doesn't support it and we give up
+// gracefully rather than looping.
+const COI_SNIPPET = `<script>
+  (function() {
+    if (self.crossOriginIsolated) return; // already isolated, nothing to do
+    if (!('serviceWorker' in navigator)) return; // SW not supported
+    var RELOAD_KEY = '__coi_reloaded__';
+    // If we've already reloaded once for COI and it still didn't work, stop.
+    if (sessionStorage.getItem(RELOAD_KEY)) return;
+    navigator.serviceWorker.register('/coi-serviceworker.js').then(function(reg) {
+      function doReload() {
+        sessionStorage.setItem(RELOAD_KEY, '1');
+        location.reload();
+      }
+      if (reg.active) {
+        doReload();
+      } else {
+        (reg.installing || reg.waiting).addEventListener('statechange', function() {
+          if (this.state === 'activated') doReload();
+        });
+      }
+    });
+  })();
+<\/script>`;
+
 // SPA fallback (Express 5: no wildcard route string — use terminal middleware).
+// Must accept HEAD as well as GET — readiness/liveness probes (including
+// Replit's preview pane and autoscale health checks) issue HEAD requests
+// against `/`, and res.sendFile already handles HEAD correctly (headers
+// only, no body) so there's no reason to exclude it.
 app.use((req, res, next) => {
-  if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+  if (!['GET', 'HEAD'].includes(req.method) || req.path.startsWith('/api/')) return next();
   res.setHeader('Cache-Control', 'no-cache');
-  res.sendFile(path.join(DIST, 'index.html'));
+
+  // For HEAD requests skip the body; just set headers and status.
+  if (req.method === 'HEAD') {
+    return res.status(200).end();
+  }
+
+  const htmlPath = path.join(DIST, 'index.html');
+  try {
+    let html = fs.readFileSync(htmlPath, 'utf8');
+    // Inject SW registration before </head> so it runs as early as possible.
+    html = html.replace('</head>', COI_SNIPPET + '</head>');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch {
+    res.status(500).send('Internal server error: could not read index.html');
+  }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`ECHO server listening on :${PORT} (COEP=${COEP_POLICY}, ai=${Boolean(ANTHROPIC_API_KEY)})`);
-});
+// Retrying EADDRINUSE matters specifically on Replit: stopping/restarting the
+// "Run" workflow sends the previous process a shutdown signal, but there is
+// no guarantee its socket is released before the new process starts binding
+// — a stale process mid-shutdown is a *transient* conflict, not a permanent
+// one, and previously this made the whole `npm run deploy:local` chain exit
+// non-zero (the Run button reporting a hard failure) for something that
+// clears itself within a second or two.
+const BIND_RETRY_MS = 500;
+const BIND_RETRY_LIMIT = 10; // ~5s total — generous for a slow prior shutdown, not indefinite.
+let bindAttempts = 0;
+let httpServer;
+
+function startListening() {
+  httpServer = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`ECHO server listening on :${PORT} (COEP=${COEP_POLICY}, ai=${Boolean(ANTHROPIC_API_KEY)})`);
+  });
+
+  // Without this, a bind failure is an unhandled 'error' event on the
+  // http.Server, which Node rethrows as an uncaught exception — the process
+  // dies with a generic stack trace instead of a message that actually says
+  // "the port was already in use."
+  httpServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && bindAttempts < BIND_RETRY_LIMIT) {
+      bindAttempts += 1;
+      console.warn(
+        `Port ${PORT} still in use (attempt ${bindAttempts}/${BIND_RETRY_LIMIT}), retrying in ${BIND_RETRY_MS}ms...`,
+      );
+      setTimeout(startListening, BIND_RETRY_MS);
+      return;
+    }
+    if (err.code === 'EADDRINUSE') {
+      console.error(`ECHO server failed to start: port ${PORT} is still in use after retrying.`);
+    } else {
+      console.error('ECHO server failed to start:', err);
+    }
+    process.exit(1);
+  });
+}
+
+startListening();
+
+// Release the port promptly on shutdown so a fast restart (or the retry loop
+// above, on someone else's process) doesn't have to wait out a stale bind.
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    httpServer.close(() => process.exit(0));
+  });
+}

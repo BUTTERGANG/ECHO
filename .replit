@@ -9,6 +9,10 @@ run = "npm run deploy:local"
 
 [env]
 PORT = "3000"
+# Persist Claude Code's auth/settings/session history across Repl restarts.
+# $HOME (/home/runner) is wiped on every container boot, but the workspace
+# disk is not — so point Claude Code's config dir into the workspace.
+CLAUDE_CONFIG_DIR = "/home/runner/workspace/.local/share/claude-config"
 
 [deployment]
 deploymentTarget = "autoscale"
@@ -18,6 +22,49 @@ run = ["sh", "-c", "npm run serve"]
 [[ports]]
 localPort = 3000
 externalPort = 80
+
+[[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 4000
+externalPort = 3000
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 9500
+externalPort = 3002
+
+[agent]
+expertMode = true
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=5000 npm run serve"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
 
 # Required Deployment Secrets (set in the Replit "Secrets" / deployment env,
 # NOT committed, NOT EXPO_PUBLIC_*):

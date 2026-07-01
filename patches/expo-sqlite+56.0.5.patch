@@ -1,0 +1,32 @@
+--- a/node_modules/expo-sqlite/web/WorkerChannel.ts
++++ b/node_modules/expo-sqlite/web/WorkerChannel.ts
+@@ -119,11 +119,19 @@
+   let i = 0;
+   // @ts-expect-error: Remove this when TypeScript supports Atomics.pause
+   const useAtomicsPause = typeof Atomics.pause === 'function';
++  // PATCHED (see patches/expo-sqlite+56.0.5.patch): the original 1_000_000 /
++  // 1_000_000_000 iteration caps are a CPU-cycle-count proxy for a wall-clock
++  // timeout, not an actual time budget. The worker's first response to any
++  // sync call may require WASM instantiation + several sequentially-awaited
++  // OPFS calls (AccessHandlePoolVFS.isReady/addCapacity), which routinely
++  // exceeds that budget on cold start, throwing "Sync operation timeout" and
++  // blocking the whole app's boot. Raised 100x to give that realistic
++  // headroom; still bounded so a genuinely stuck worker eventually throws.
+   while (Atomics.load(lock, 0) === PENDING) {
+     ++i;
+ 
+     if (useAtomicsPause) {
+-      if (i > 1_000_000) {
++      if (i > 100_000_000) {
+         throw new Error('Sync operation timeout');
+       }
+       // @ts-expect-error: Remove this when TypeScript supports Atomics.pause
+@@ -131,7 +139,7 @@
+     } else {
+       // NOTE(kudo): Unfortunate for the busy loop,
+       // because we don't have a way for main thread to yield its execution to other callbacks.
+-      if (i > 1000_000_000) {
++      if (i > 100_000_000_000) {
+         throw new Error('Sync operation timeout');
+       }
+     }

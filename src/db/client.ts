@@ -48,7 +48,12 @@ let initError: Error | undefined;
 // same-options cache registration completed, producing a different and
 // worse failure than the one it was meant to avoid. Not worth the risk for
 // an unconfirmed win — the retry loop alone is the safer bet.)
-const OPEN_DB_ATTEMPTS = 3;
+// Keep attempts low enough that the busy-wait doesn't freeze the browser
+// for too long. Each attempt gives the worker ~1–2 s via the patched
+// iteration cap; 5 attempts = ~5–10 s before we surface the error and let
+// the UI retry with a small delay (giving the still-warming worker more
+// wall-clock time without blocking the main thread).
+const OPEN_DB_ATTEMPTS = 5;
 
 function getDb(): DB {
   if (real) return real;
@@ -65,6 +70,17 @@ function getDb(): DB {
   }
   initError = lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   throw initError;
+}
+
+/**
+ * Reset the cached DB instance and any cached init error so the next
+ * `getDb()` call starts a fresh attempt. Used by the UI retry path on web:
+ * after a "Sync operation timeout" the wa-sqlite worker keeps warming up in
+ * the background, so a short delay + retry often succeeds.
+ */
+export function resetDb(): void {
+  real = undefined;
+  initError = undefined;
 }
 
 // Proxy so existing call sites (`db.select(...)`, `db.insert(...)`, etc.)

@@ -6,6 +6,7 @@ import { and, desc, isNull, eq } from 'drizzle-orm';
 
 import { db } from '../client';
 import { entries, type Entry, type NewEntry } from '../schema';
+import { clearFtsIndex, reindexPlaintextEntries, syncFtsForEntry } from './search';
 import { decryptField, encryptField } from '@/services/vault';
 import { isEncrypted } from '@/utils/encryption';
 import { uuid } from '@/utils/idgen';
@@ -30,6 +31,7 @@ export async function createEntry(input: CreateEntryInput): Promise<Entry> {
     transcript: await encryptField(plaintextTranscript),
   };
   const [created] = await db.insert(entries).values(row).returning();
+  await syncFtsForEntry(created.id, created.transcript, plaintextTranscript);
   // Return the plaintext form for immediate UI use.
   return { ...created, transcript: plaintextTranscript };
 }
@@ -65,11 +67,15 @@ export async function updateEntry(
     set.transcript = await encryptField(patch.transcript ?? null);
   }
   const [row] = await db.update(entries).set(set).where(eq(entries.id, id)).returning();
+  if (row && Object.prototype.hasOwnProperty.call(patch, 'transcript')) {
+    await syncFtsForEntry(row.id, row.transcript, patch.transcript ?? null);
+  }
   return row ? decryptRow(row) : undefined;
 }
 
 export async function softDeleteEntry(id: string): Promise<void> {
   await db.update(entries).set({ deletedAt: Date.now() }).where(eq(entries.id, id));
+  await syncFtsForEntry(id, null, null);
 }
 
 /**
@@ -85,6 +91,9 @@ export async function encryptAllTranscripts(): Promise<number> {
       changed++;
     }
   }
+  // Every transcript is now encrypted (or was already) — nothing should
+  // remain indexed in plaintext.
+  await clearFtsIndex();
   return changed;
 }
 
@@ -101,5 +110,7 @@ export async function decryptAllTranscripts(): Promise<number> {
       changed++;
     }
   }
+  // Every transcript is plaintext again — safe to rebuild the search index.
+  await reindexPlaintextEntries();
   return changed;
 }

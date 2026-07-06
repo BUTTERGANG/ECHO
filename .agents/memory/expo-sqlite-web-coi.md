@@ -1,31 +1,46 @@
 ---
 name: expo-sqlite web COI + timeout setup
-description: How ECHO handles SharedArrayBuffer / Sync operation timeout for expo-sqlite on web in the Replit preview context.
+description: Historical — how ECHO used to handle SharedArrayBuffer / Sync operation timeout for expo-sqlite on web. Superseded by the sql.js migration; kept for context on why the current architecture looks the way it does.
 ---
 
-## The rule
-The server must send `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: credentialless` on every response. Without these, `new SharedArrayBuffer(4)` in `invokeWorkerSync` throws `ReferenceError: SharedArrayBuffer is not defined`.
+## Superseded
 
-**Why:** expo-sqlite's web backend (wa-sqlite) uses SharedArrayBuffer + Atomics for synchronous worker communication. SharedArrayBuffer is only available in cross-origin isolated contexts.
+The web database no longer uses `expo-sqlite` (wa-sqlite). It now runs
+**sql.js (WASM SQLite) in a plain Web Worker**, persisted to IndexedDB —
+see `src/db/sqlWorker.ts` and `src/db/client.ts`. This driver is async
+message-passing end to end, so it needs no `SharedArrayBuffer`, no
+cross-origin isolation, and no COI service worker. Everything below this
+line describes the **old** setup and no longer reflects the code — kept
+only so future work understands why the sql.js approach was chosen.
 
-## Workflow must be on port 5000
-Replit's webview output type requires port 5000. The workflow is configured with `PORT=5000 npm run serve`. The `.replit` PORT env var is 3000 and cannot be edited directly — override in the command.
+See `DEPLOY.md`'s "History" section and `THE-VISION/STARTUP-AND-BOOT.md`'s
+"Bug #2" for the full story.
 
-## COI Service Worker
-A COI service worker (`server/coi-serviceworker.js`) is served and injected into every HTML response by the Express server. It adds COOP/COEP headers at the browser level, bypassing the Replit preview iframe parent restriction. A sessionStorage guard prevents infinite reload loops.
+## The old rule (no longer applies)
+The server used to send `Cross-Origin-Opener-Policy: same-origin` +
+`Cross-Origin-Embedder-Policy: credentialless` on every response, plus a COI
+service worker (`server/coi-serviceworker.js`), to make `SharedArrayBuffer`
+available for wa-sqlite's synchronous worker communication. All of that —
+the headers, the service worker, `patches/expo-sqlite+56.0.5.patch` — has
+been deleted from the codebase.
 
-**How to apply:** The injection is in `server/index.mjs` — the `COI_SNIPPET` constant is injected before `</head>` on every HTML response. The SW is served at `/coi-serviceworker.js`.
+**Why it was replaced:** `SharedArrayBuffer` requires the *top-level*
+document to opt into cross-origin isolation, not just the framed page.
+Replit's Webview preview panel embeds the app in an iframe whose parent
+(the Replit IDE page) never sends those headers — so wa-sqlite could not
+work inside the embedded preview at all, only via "Open in new tab." sql.js
+has no such dependency, so it works in both contexts identically.
 
-## Sync operation timeout
-Even with SharedArrayBuffer available, `openDatabaseSync` can throw "Sync operation timeout" on cold start because WASM init + OPFS setup takes longer than the busy-wait iteration cap.
+## Still current: workflow port
+The Repl workflow runs on port 5000 (`PORT=5000`), matching `.replit`'s
+`[[ports]]` mapping to `externalPort = 80`. The Run button now invokes
+`npm run start:replit` (`scripts/ensure-dist.mjs` + `npm run serve`), not
+`deploy:local` — see `THE-VISION/STARTUP-AND-BOOT.md`.
 
-**Fix:**
-1. `patches/expo-sqlite+56.0.5.patch` raises iteration cap 100x (`1e8`/`1e11`). Verify it's applied: dist worker should contain `1e8` near "Sync operation timeout".
-2. `OPEN_DB_ATTEMPTS = 5` in `src/db/client.ts` — gives worker ~5-10s total.
-3. `resetDb()` exported from `client.ts` clears cached error/instance.
-4. `src/app/_layout.tsx` auto-retries up to 3 times with 2.5s delays before surfacing error + manual Retry button.
-
-**Why:** The wa-sqlite worker keeps warming up even after the main-thread busy-wait times out. A short pause + retry usually succeeds on the next attempt.
-
-## Screenshot tool limitation
-The Replit screenshot tool times out during DB init because the busy-wait blocks the browser. This is expected — don't use screenshots to verify DB init success. Verify via: `curl -s http://localhost:5000/healthz` (should be `{"ok":true}`).
+## Still current: screenshot tool limitation caveat
+Historically the Replit screenshot tool could time out while the old
+busy-wait DB init blocked the browser thread. That specific cause no longer
+applies (sql.js init is async, non-blocking), but if a screenshot tool ever
+hangs waiting for first paint again, verify server liveness independently
+via `curl -s http://localhost:5000/healthz` (expect `{"ok":true,...}`)
+before assuming the app itself is broken.

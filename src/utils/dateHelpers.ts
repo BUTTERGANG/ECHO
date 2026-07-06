@@ -22,6 +22,19 @@ export function dayDiff(aMs: number, bMs: number): number {
   return Math.round((aMid - bMid) / 86_400_000);
 }
 
+/**
+ * Fractional age in years from a date-of-birth epoch-ms (e.g. 28.4). `nowMs` is
+ * a parameter so callers can pass a value read in an effect, keeping render pure.
+ */
+export function preciseAgeYears(dobMs: number, nowMs: number = Date.now()): number {
+  return Math.max(0, (nowMs - dobMs) / (365.2425 * 86_400_000));
+}
+
+/** Whole local days elapsed since an epoch-ms (0 if it's in the future). */
+export function daysSince(ms: number, nowMs: number = Date.now()): number {
+  return Math.max(0, dayDiff(nowMs, ms));
+}
+
 /** Monday-based start of the week ('YYYY-MM-DD') for a given date. */
 export function weekStartISO(ms: number = Date.now()): string {
   const d = new Date(ms);

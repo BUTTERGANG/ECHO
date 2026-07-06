@@ -7,8 +7,6 @@
  *     issue HEAD requests against `/` before treating the app as up — a
  *     GET-only SPA fallback passes manual testing but fails those probes.
  *   - A client-side route (not just `/`) resolves via the SPA fallback too.
- *   - COOP/COEP headers are present — wa-sqlite needs them for
- *     SharedArrayBuffer; losing them silently breaks persistence, not load.
  *   - The web bundle's own referenced JS/CSS assets actually serve.
  *   - /healthz reports ok.
  *
@@ -62,18 +60,27 @@ async function main() {
   const rootBody = await getRoot.text();
   check('GET / → 200', getRoot.status === 200, `got ${getRoot.status}`);
   check('GET / → contains <div id="root">', rootBody.includes('id="root"'));
+  // The sql.js web database runs in a plain Web Worker, so the app must NOT
+  // depend on cross-origin isolation — it can't exist inside Replit's
+  // preview iframe. Serving these headers again would mask a regression to
+  // a SharedArrayBuffer-dependent setup, so assert their absence.
   check(
-    'GET / → Cross-Origin-Opener-Policy: same-origin',
-    getRoot.headers.get('cross-origin-opener-policy') === 'same-origin',
-    `got ${getRoot.headers.get('cross-origin-opener-policy')}`,
-  );
-  check(
-    'GET / → Cross-Origin-Embedder-Policy present',
-    Boolean(getRoot.headers.get('cross-origin-embedder-policy')),
+    'GET / → no Cross-Origin-Embedder-Policy header (COI no longer used)',
+    !getRoot.headers.get('cross-origin-embedder-policy'),
+    `got ${getRoot.headers.get('cross-origin-embedder-policy')}`,
   );
 
   const headRoot = await fetch(`${BASE_URL}/`, { method: 'HEAD' });
   check('HEAD / → 200 (readiness probes use HEAD)', headRoot.status === 200, `got ${headRoot.status}`);
+
+  // Transcription proxy is wired (503 without GROQ_API_KEY, 400 with an empty
+  // body when configured) — anything but 404 proves the route exists.
+  const stt = await fetch(`${BASE_URL}/api/transcribe`, {
+    method: 'POST',
+    headers: { 'content-type': 'audio/webm' },
+    body: '',
+  });
+  check('POST /api/transcribe → route wired (not 404)', stt.status !== 404, `got ${stt.status}`);
 
   const headClientRoute = await fetch(`${BASE_URL}/settings`, { method: 'HEAD' });
   check(

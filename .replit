@@ -1,14 +1,16 @@
 # Replit configuration for ECHO.
-# Autoscale deployment: a stateless Node server serves the Expo web SPA with
-# the cross-origin-isolation headers wa-sqlite needs, plus the Claude proxy.
+# Autoscale deployment: a stateless Node server serves the Expo web SPA plus
+# the Claude proxy. The web database is sql.js in a plain Web Worker, so no
+# cross-origin-isolation headers are needed — the app works in the preview
+# iframe.
 
 modules = ["nodejs-22"]
 
-# Local dev inside the Repl: build once, then serve.
-run = "npm run deploy:local"
+# Local dev inside the Repl: rebuild only if sources changed, then serve.
+run = "npm run start:replit"
 
 [env]
-PORT = "3000"
+PORT = "5000"
 # Persist Claude Code's auth/settings/session history across Repl restarts.
 # $HOME (/home/runner) is wiped on every container boot, but the workspace
 # disk is not — so point Claude Code's config dir into the workspace.
@@ -21,23 +23,27 @@ run = ["sh", "-c", "npm run serve"]
 
 [[ports]]
 localPort = 3000
-externalPort = 80
-
-[[ports]]
-localPort = 3001
 externalPort = 3001
 
 [[ports]]
-localPort = 4000
-externalPort = 3000
+localPort = 3011
+externalPort = 3002
+
+[[ports]]
+localPort = 3022
+externalPort = 3003
 
 [[ports]]
 localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 9500
-externalPort = 3002
+localPort = 5050
+externalPort = 3000
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
 
 [agent]
 expertMode = true
@@ -60,7 +66,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=5000 npm run serve"
+args = "PORT=5000 npm run start:replit"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
@@ -72,4 +78,3 @@ outputType = "webview"
 # Optional:
 #   ANTHROPIC_MODEL     - defaults to claude-sonnet-4-6
 #   ALLOWED_ORIGIN      - e.g. https://<your-deployment>.replit.app  (locks the proxy)
-#   COEP_POLICY         - require-corp (default) | credentialless (if HF model fetch is blocked)

@@ -1,0 +1,12 @@
+-- Full-text search index over entry transcripts.
+--
+-- FTS4, not FTS5: expo-sqlite (native) has FTS3/4/5 compiled in, but the
+-- web build (sql.js, loaded from jsdelivr) only has FTS3/4 — no FTS5. FTS4
+-- is the common denominator so search behaves the same on both platforms.
+--
+-- `entry_id` is UNINDEXED (not full-text tokenized, just carried alongside
+-- for joining back to `entries`). Kept in sync by the application layer
+-- (src/db/queries/search.ts), not by SQL triggers, because whether a given
+-- transcript may be indexed in plaintext depends on the passphrase vault's
+-- in-memory unlock state (src/services/vault.ts), which triggers can't see.
+CREATE VIRTUAL TABLE `entries_fts` USING fts4(`entry_id` UNINDEXED, `transcript`);

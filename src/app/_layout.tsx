@@ -8,54 +8,19 @@ import { ThemedText } from '@/components/themed-text';
 import { UnlockGate } from '@/components/UnlockGate';
 import { resetDb } from '@/db/client';
 import { useRunMigrations } from '@/db/migrate';
+import { ensureFtsIndexed } from '@/db/queries/search';
 import { hydrateVault } from '@/services/vault';
 import { useVaultStore } from '@/stores/vaultStore';
 
-// On web, "Sync operation timeout" means the wa-sqlite worker is still
-// warming up (WASM init + OPFS setup). The worker keeps running in the
-// background even after the main-thread busy-wait gives up, so a short
-// pause followed by a fresh attempt usually succeeds. We auto-retry up to
-// this many times before surfacing the error for the user to retry manually.
+// On web, database init can fail transiently — e.g. the sql.js CDN fetch
+// hiccups on a slow connection. resetDb() discards the failed worker, so a
+// short pause followed by a fresh attempt usually succeeds. We auto-retry up
+// to this many times before surfacing the error for a manual retry.
 const WEB_AUTO_RETRIES = 3;
 const WEB_RETRY_DELAY_MS = 2500;
 
-function isTimeoutError(err: Error | null | undefined): boolean {
-  return Platform.OS === 'web' && !!err?.message?.includes('timeout');
-}
-
-function AppContent() {
-  const colorScheme = useColorScheme();
-  const { success, error } = useRunMigrations();
-  const vaultHydrated = useVaultStore((s) => s.hydrated);
-  const vaultStatus = useVaultStore((s) => s.status);
-  const ready = success && vaultHydrated;
-
-  return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <ErrorBoundary>
-        {error ? (
-          <View style={styles.center}>
-            <ThemedText type="subtitle">Database error</ThemedText>
-            <ThemedText type="small">{error.message}</ThemedText>
-          </View>
-        ) : !ready ? (
-          <View style={styles.center}>
-            <ActivityIndicator />
-          </View>
-        ) : vaultStatus === 'locked' ? (
-          <UnlockGate />
-        ) : (
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="entry/[id]" options={{ headerShown: true, title: 'Entry' }} />
-            <Stack.Screen name="compose" options={{ presentation: 'modal', headerShown: false }} />
-            <Stack.Screen name="onboarding" options={{ presentation: 'modal', headerShown: false }} />
-            <Stack.Screen name="encrypt-setup" options={{ presentation: 'modal', headerShown: false }} />
-          </Stack>
-        )}
-      </ErrorBoundary>
-    </ThemeProvider>
-  );
+function shouldAutoRetry(err: Error | null | undefined): boolean {
+  return Platform.OS === 'web' && !!err;
 }
 
 export default function RootLayout() {
@@ -75,7 +40,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (!lastError) return;
-    if (!isTimeoutError(lastError)) return;
+    if (!shouldAutoRetry(lastError)) return;
     if (autoRetryCount >= WEB_AUTO_RETRIES) return;
 
     setWaitingToRetry(true);
@@ -107,7 +72,7 @@ export default function RootLayout() {
 
   // Show a waiting screen while the auto-retry timer is counting down so the
   // UI doesn't flash an error between attempts.
-  if (waitingToRetry || (lastError && isTimeoutError(lastError) && autoRetryCount < WEB_AUTO_RETRIES)) {
+  if (waitingToRetry || (lastError && shouldAutoRetry(lastError) && autoRetryCount < WEB_AUTO_RETRIES)) {
     return (
       <SafeAreaProvider>
         <View style={styles.center}>
@@ -120,8 +85,8 @@ export default function RootLayout() {
     );
   }
 
-  // After all auto-retries are exhausted for a timeout, or for non-timeout
-  // errors, show the manual retry / error screen.
+  // After all auto-retries are exhausted for a web init error, or for
+  // non-retryable errors, show the manual retry / error screen.
   if (lastError) {
     return (
       <SafeAreaProvider>
@@ -129,7 +94,7 @@ export default function RootLayout() {
           <ThemedText type="subtitle">Database error</ThemedText>
           <ThemedText type="small">{lastError.message}</ThemedText>
           <Pressable style={styles.retryButton} onPress={handleManualRetry}>
-            <ThemedText type="defaultSemiBold">Retry</ThemedText>
+            <ThemedText type="smallBold">Retry</ThemedText>
           </Pressable>
         </View>
       </SafeAreaProvider>
@@ -138,7 +103,7 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <AppContentWrapper
+      <AppContent
         key={retryKey}
         onError={handleError}
       />
@@ -146,7 +111,7 @@ export default function RootLayout() {
   );
 }
 
-function AppContentWrapper({ onError }: { onError: (err: Error | null) => void }) {
+function AppContent({ onError }: { onError: (err: Error | null) => void }) {
   const colorScheme = useColorScheme();
   const { success, error } = useRunMigrations();
   const vaultHydrated = useVaultStore((s) => s.hydrated);
@@ -156,6 +121,12 @@ function AppContentWrapper({ onError }: { onError: (err: Error | null) => void }
   useEffect(() => {
     onError(error ?? null);
   }, [error, onError]);
+
+  // Self-heals the search index for entries that predate this feature (or
+  // otherwise missed a write) — cheap to run on every successful boot.
+  useEffect(() => {
+    if (success) ensureFtsIndexed();
+  }, [success]);
 
   if (error) return null;
 
@@ -172,6 +143,7 @@ function AppContentWrapper({ onError }: { onError: (err: Error | null) => void }
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="entry/[id]" options={{ headerShown: true, title: 'Entry' }} />
+            <Stack.Screen name="state" options={{ headerShown: true, title: 'State' }} />
             <Stack.Screen name="compose" options={{ presentation: 'modal', headerShown: false }} />
             <Stack.Screen name="onboarding" options={{ presentation: 'modal', headerShown: false }} />
             <Stack.Screen name="encrypt-setup" options={{ presentation: 'modal', headerShown: false }} />

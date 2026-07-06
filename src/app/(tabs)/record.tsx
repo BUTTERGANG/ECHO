@@ -62,7 +62,7 @@ export default function RecordScreen() {
     //    non-fatal — the user keeps the audio and can retry later.
     setStatus('transcribing');
     let objectUrl: string | null = null;
-    let transcribeFailed = false;
+    let failureReason: string | null = null;
     try {
       objectUrl = await getAudioObjectURL(`idb:${entryId}`);
       if (objectUrl) {
@@ -72,25 +72,30 @@ export default function RecordScreen() {
           upsertEntry(final);
           void maybeSummarizeEntry(final, aiEnabled);
         }
+      } else {
+        failureReason = 'the recording could not be read back for transcription';
       }
-    } catch {
-      // The speech model can fail to load (e.g. blocked cross-origin fetch).
-      // The entry + audio are already saved, so tell the user rather than
-      // silently landing them on a transcript-less entry.
-      transcribeFailed = true;
+    } catch (err) {
+      // On-device transcription can fail loading the model (blocked cross-origin
+      // import, WASM/threads unsupported, out-of-memory on a large model) or
+      // during inference. The entry + audio are already saved, so surface the
+      // real reason rather than silently landing on a transcript-less entry.
+      failureReason = err instanceof Error ? err.message : String(err);
+      // Full error to the console/Replit logs for diagnosis (stack, cause).
+      console.error('[transcribe] failed:', err);
     } finally {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setModelProgress(undefined);
     }
 
     // 3. Open the new entry (audio is saved + playable either way).
-    if (transcribeFailed) {
+    if (failureReason) {
       setStatus('idle');
-      setError('Saved your audio, but transcription couldn’t finish. Open the entry to play it back, or try recording again.');
+      setError(`Saved your audio, but transcription couldn’t finish: ${failureReason}. Open the entry to play it back, or try again.`);
     } else {
       reset();
     }
-    router.replace(`/entry/${entryId}`);
+    router.push(`/entry/${entryId}`);
   };
 
   const onPress = () => {
@@ -102,8 +107,8 @@ export default function RecordScreen() {
     status === 'transcribing'
       ? modelProgress !== undefined
         ? `Loading the transcription model… ${modelProgress}%`
-        : 'Transcribing on this device…'
-      : 'Speak freely. Transcription runs on this device — your audio never leaves it.';
+        : 'Transcribing your recording…'
+      : 'Speak freely. Your recording is transcribed securely and never stored.';
 
   return (
     <Screen>

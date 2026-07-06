@@ -1,81 +1,88 @@
 # Deploying ECHO to Replit (Autoscale)
 
-ECHO is **local-first**: the browser holds all data (wa-sqlite/OPFS) and runs
-Whisper client-side. The server (`server/index.mjs`) is a thin, **stateless**
-layer — ideal for Autoscale (scale-to-zero, no shared filesystem needed).
+ECHO is **local-first**: the browser holds all data (sql.js WASM SQLite in a
+Web Worker, persisted to IndexedDB). Two things go through a thin server proxy
+so their API keys never reach the client bundle — **AI summaries** (Claude) and
+**voice transcription** (Groq Whisper). The server (`server/index.mjs`) is
+otherwise **stateless** — ideal for Autoscale (scale-to-zero, no shared
+filesystem needed).
 
 ## What the server does
 1. Serves the Expo web SPA from `dist/`.
-2. Sends cross-origin-isolation headers (`COOP: same-origin`, `COEP: require-corp`)
-   so wa-sqlite's `SharedArrayBuffer` works. **Production needs these** — the
-   dev-only Metro middleware does not run here.
-3. Proxies Claude summaries (`/api/anthropic/summary`) so the Anthropic key
-   stays server-side (never in the client bundle). Rate-limited (20 req/min/IP).
-4. `/healthz` for the autoscale health check.
+2. Proxies Claude summaries (`/api/anthropic/summary`, `/api/anthropic/weekly`)
+   so the Anthropic key stays server-side (never in the client bundle).
+3. Proxies voice transcription (`/api/transcribe`): audio is uploaded, forwarded
+   to Groq's hosted Whisper, and the transcript returned. **Audio is streamed
+   through in-memory and never written to disk.** The Groq key stays server-side.
+4. All proxies are rate-limited (20 req/min/IP).
+5. `/healthz` for the autoscale health check.
+
+It deliberately does **not** send cross-origin-isolation headers (COOP/COEP).
+The web database is sql.js in a plain Web Worker — no `SharedArrayBuffer`,
+no isolation requirement. That is what lets the app run inside Replit's
+preview iframe, where isolation can never be enabled (the embedding page
+controls it, and replit.com is not cross-origin isolated).
 
 ## One-time setup
 1. Push this repo to Replit (or import it).
 2. Add a **Deployment Secret** (Tools → Deployments → Secrets), NOT a regular
    env var, and NOT `EXPO_PUBLIC_*`:
-   - `ANTHROPIC_API_KEY` = your Claude key
-   - *(optional)* `ALLOWED_ORIGIN` = `https://<your-deployment>.replit.app` — locks the proxy to your origin
-   - *(optional)* `ANTHROPIC_MODEL`, `COEP_POLICY`
+   - `ANTHROPIC_API_KEY` = your Claude key (enables AI summaries)
+   - `GROQ_API_KEY` = your Groq key (enables voice transcription) — get one at
+     console.groq.com. Without it, recording still saves audio but transcription
+     returns a "not configured" error.
+   - *(optional)* `ALLOWED_ORIGIN` = `https://<your-deployment>.replit.app` — locks the proxies to your origin
+   - *(optional)* `ANTHROPIC_MODEL`, `GROQ_TRANSCRIBE_MODEL` (default `whisper-large-v3-turbo`)
 3. Deploy. `.replit` already declares:
    - target `autoscale`
    - build `npm ci && npm run build:web`
    - run `npm run serve`
 
 ## Verify after deploy
-- `GET /healthz` → `{"ok":true,"ai":true}` (ai:true means the key is set).
-- Open the site, create a text entry → reload → it persists (proves wa-sqlite +
-  isolation headers work).
+- `GET /healthz` → `{"ok":true,"ai":true,"stt":true}` (`ai`/`stt` reflect whether
+  the Anthropic / Groq keys are set).
+- Open the site, create a text entry → reload → it persists (proves the
+  sql.js worker + IndexedDB persistence work).
 - Enable AI summaries in Settings → **reload** → the toggle is still on (proves
-  settings persistence) → open an entry → summary appears (proves the proxy).
+  settings persistence) → open an entry → summary appears with the "To reflect
+  on" follow-up question (proves the Claude proxy).
 - **Record a voice note → transcript appears → audio plays back** (proves the
-  capt­ure loop: MediaRecorder → IndexedDB → Whisper-from-CDN). This is the one
-  that exercises the cross-origin model fetch — watch the browser console.
+  capture loop: MediaRecorder → IndexedDB → `/api/transcribe` → Groq). On
+  failure the record screen now shows the real error; also watch the console.
 
 ## Known risks / watch items
-- **`openDatabaseSync` on web can throw `Error: Sync operation timeout` on
-  app boot, producing a black screen.** `src/db/client.ts` calls
-  `openDatabaseSync` at module load. On web, `expo-sqlite` fakes "sync" by
-  busy-waiting on the main thread (`Atomics.pause()`, capped at a fixed
-  iteration count — see `node_modules/expo-sqlite/web/WorkerChannel.ts`)
-  for a Web Worker to finish WASM init + OPFS pool setup
-  (`AccessHandlePoolVFS`), which can easily exceed that budget on a cold
-  start. **This isn't just an open-time risk** — `drizzle-orm/expo-sqlite`'s
-  driver is sync-only, so *every* query on web goes through this same
-  busy-wait for the app's lifetime. Patched via `patches/expo-sqlite+56.0.5.patch`
-  (raises the iteration cap ~100x; applied automatically by `postinstall`).
-  Expo's own SDK 56 docs flag `expo-sqlite` web support as alpha/"may be
-  unstable" — if this resurfaces after an expo-sqlite upgrade, re-check
-  `WorkerChannel.ts` and regenerate the patch. The real fix would be moving
-  web off the sync driver entirely (`openDatabaseAsync` + an async query
-  path); that's a larger change, not done here.
-- **COEP default is `credentialless`, not `require-corp`.** Expo SDK 56's
-  `expo-sqlite` web docs (https://docs.expo.dev/versions/v56.0.0/sdk/sqlite/)
-  specify `credentialless` for the COEP header that enables SharedArrayBuffer
-  for the wa-sqlite worker. `credentialless` has been supported in Firefox
-  since 119 and Safari since 17.4, so it's no longer Chromium-only. It also
-  happens to fix the Whisper model fetch below. If you override to
-  `require-corp`, **retest app load**, not just voice transcription.
-- **COEP vs the Whisper model download.** transformers.js (the library) loads from
-  the jsdelivr CDN, which sends `Cross-Origin-Resource-Policy: cross-origin` — so it
-  loads fine either way. The **model weights** come from the HuggingFace CDN and are
-  the one unavoidable cross-origin fetch; under `credentialless` (the default) this
-  works without special-casing. **Test voice transcription on the deployed URL.**
-- **transformers.js is loaded at runtime, not bundled** (its onnxruntime dep can't
-  be Metro-bundled — see WEB_FIRST_NOTES.md). The npm package was therefore removed
-  from `dependencies`, so `npm ci` no longer installs `onnxruntime-node` + `sharp`
-  (native binaries) — a faster, lower-risk build than before.
+- **sql.js is loaded from the jsdelivr CDN at runtime**, not bundled (same
+  technique as transformers.js — Metro can't bundle it; see
+  `src/db/sqlWorker.ts`). First app boot needs network access to
+  `cdn.jsdelivr.net`. A transient CDN failure surfaces as a database error
+  screen with auto-retry (see `src/app/_layout.tsx`).
+- **Persistence is snapshot-based.** The worker serializes the whole database
+  to IndexedDB on a 250 ms debounce after every write. A tab killed within
+  that window can lose the last write. Fine at journaling scale; revisit if
+  write volume grows.
+- **Transcription runs server-side (Groq), not on-device.** Earlier builds ran
+  Whisper in the browser via transformers.js; that was replaced because the
+  first-run model download (~240 MB) and WASM inference failed on constrained
+  devices. Trade-off: **audio now leaves the device** to be transcribed (streamed
+  through the proxy, not stored). It is still stored only on-device (IndexedDB).
+  Cost is ~$0.04/hour of audio on `whisper-large-v3-turbo`.
 - **Rate limiter is per-instance / in-memory.** Resets on scale events; it's a
   basic guard, not a global quota. Consider `ALLOWED_ORIGIN` + a real limiter if abused.
 - **Encryption at rest (web) is opt-in and OFF by default.** When enabled (Settings →
   Security), transcripts are AES-256-GCM encrypted with a passphrase-derived key; when
-  off, OPFS is origin-sandboxed but unencrypted, so anyone with device access can read
-  entries. `ai_summaries` text + audio blobs are not yet encrypted (see WEB_FIRST_NOTES.md).
+  off, IndexedDB is origin-sandboxed but unencrypted, so anyone with device access can
+  read entries. `ai_summaries` text + audio blobs are not yet encrypted (see WEB_FIRST_NOTES.md).
 - **Node version.** Deploy pins `nodejs-22` (`.replit`); `package.json` requires Node ≥20.
 
+## History: why not expo-sqlite (wa-sqlite) on web?
+The web build originally used `expo-sqlite`'s wa-sqlite backend. It requires
+`SharedArrayBuffer`, which requires cross-origin isolation — impossible inside
+Replit's preview iframe, and fragile everywhere else (COOP/COEP headers, a
+patched busy-wait timeout, a COI service worker). All of that was removed when
+web moved to sql.js; native (iOS/Android) still uses real `expo-sqlite` via
+`src/db/client.native.ts`, and both platforms apply the same drizzle-kit
+migrations bundle.
+
 ## Static-host alternative (not chosen)
-A pure static deployment is cheaper but can't reliably set COOP/COEP or host the
-key proxy — which is exactly why we run the thin Autoscale server.
+A pure static deployment is cheaper but can't host the key proxy — which is
+exactly why we run the thin Autoscale server.

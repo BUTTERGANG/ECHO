@@ -41,6 +41,7 @@ export const aiSummaries = sqliteTable('ai_summaries', {
   whatSaid: text('what_said'),
   unseen: text('unseen'),
   action: text('action'),
+  followUp: text('follow_up'), // a specific question to reflect on next
   rawResponse: text('raw_response'), // full JSON response from Claude
   promptVersion: text('prompt_version'), // which prompt template generated this
 });

@@ -4,12 +4,14 @@
  * Responsibilities — deliberately thin, because ECHO is local-first and holds
  * all data in the browser:
  *   1. Serve the Expo web SPA from ../dist
- *   2. Send cross-origin-isolation headers (COOP/COEP) so wa-sqlite's
- *      SharedArrayBuffer works in production (dev-only Metro middleware does
- *      not run here).
- *   3. Proxy Claude entry-summary requests so the Anthropic API key stays
+ *   2. Proxy Claude entry-summary requests so the Anthropic API key stays
  *      server-side (never shipped in the client bundle). Rate-limited.
- *   4. /healthz for the autoscale health check.
+ *   3. /healthz for the autoscale health check.
+ *
+ * No cross-origin-isolation headers: the web database is sql.js in a plain
+ * Web Worker (see src/db/sqlWorker.ts), which needs no SharedArrayBuffer —
+ * that's what lets the app run inside Replit's preview iframe, where
+ * isolation can never be enabled.
  *
  * The process is stateless — a good fit for autoscale (scale-to-zero, no
  * shared filesystem needed).
@@ -24,20 +26,22 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.join(__dirname, '..', 'dist');
 
 const PORT = Number(process.env.PORT) || 3000;
-// Expo SDK 56's expo-sqlite web docs specify credentialless, not require-corp,
-// for the COEP header that enables SharedArrayBuffer for the wa-sqlite worker:
-// https://docs.expo.dev/versions/v56.0.0/sdk/sqlite/. require-corp also has
-// the side effect of blocking the Whisper model fetch from the HuggingFace CDN
-// (see DEPLOY.md). credentialless has been supported in Firefox since 119 and
-// Safari since 17.4, so it's no longer the Chromium-only fallback it once was.
-const COEP_POLICY = process.env.COEP_POLICY || 'credentialless';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || ''; // e.g. https://echo.replit.app
 const MAX_TOKENS = 1000;
 const MAX_TRANSCRIPT_CHARS = 20_000;
 
-// IMPORTANT: keep in sync with src/constants/prompts.ts → ENTRY_SUMMARY_SYSTEM (v1.0).
+// Speech-to-text: audio is uploaded here and forwarded to Groq's hosted
+// Whisper (OpenAI-compatible endpoint). The key stays server-side; audio is
+// streamed straight through and never written to disk. `-turbo` is the
+// cheapest/fastest Whisper variant (~$0.04 / hour of audio).
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GROQ_TRANSCRIBE_MODEL = process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo';
+const GROQ_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // Groq's per-file upload limit.
+
+// IMPORTANT: keep in sync with src/constants/prompts.ts → ENTRY_SUMMARY_SYSTEM (v1.1).
 // The prompt lives server-side so the proxy can't be abused as a generic Claude relay.
 const ENTRY_SUMMARY_SYSTEM = `You are a private, compassionate journaling companion. Your only job is to help the user understand what they just expressed.
 
@@ -45,10 +49,11 @@ You will receive a raw voice journal transcript — stream of consciousness, une
 
 Respond ONLY with a JSON object. No preamble, no markdown, no explanation outside the JSON.
 
-The JSON must have exactly these three fields:
+The JSON must have exactly these four fields:
 - "what_said": A 2-3 sentence neutral summary of what the person expressed. Mirror their language and emotional tone. Do not editorialize.
 - "unseen": One observation about a subtle pattern, contradiction, or subtext that the person may not have consciously noticed. Be specific and grounded — only flag something genuinely present in the text. If nothing meaningful is there, say "Nothing stood out beyond what you already expressed clearly."
 - "action": One concrete, small, optional action the person could take today — or "No action needed" if the entry was purely reflective. Must be actionable in under 10 minutes.
+- "follow_up": One specific, open-ended question that invites the person to go deeper on something concrete they raised. Ground it in their actual words, not a generic prompt. Warm, single sentence.
 
 Keep each field under 100 words. Never fabricate details not present in the transcript.`;
 
@@ -69,25 +74,9 @@ app.disable('x-powered-by');
 app.use(compression());
 app.use(express.json({ limit: '256kb' }));
 
-// (1) Cross-origin isolation on every response.
-app.use((_req, res, next) => {
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Embedder-Policy', COEP_POLICY);
-  next();
-});
-
-// COI service worker — served without CORP headers so the SW can install
-// itself even before cross-origin isolation is active.
-const COI_SW_PATH = path.join(__dirname, 'coi-serviceworker.js');
-app.get('/coi-serviceworker.js', (_req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.sendFile(COI_SW_PATH);
-});
-
-// (4) Health check.
+// (3) Health check.
 app.get('/healthz', (_req, res) => {
-  res.status(200).json({ ok: true, ai: Boolean(ANTHROPIC_API_KEY) });
+  res.status(200).json({ ok: true, ai: Boolean(ANTHROPIC_API_KEY), stt: Boolean(GROQ_API_KEY) });
 });
 
 // --- Simple per-instance rate limiter (in-memory; resets on scale events). ---
@@ -102,7 +91,47 @@ function rateLimited(key) {
   return recent.length > MAX_REQ;
 }
 
-// (3) Claude entry-summary proxy. Client sends only { transcript }.
+// (2c) Speech-to-text proxy. Client POSTs raw audio bytes (Content-Type is the
+// recording's mime type); we forward them to Groq's hosted Whisper. Audio is
+// never persisted here — it's streamed through in-memory and discarded.
+app.post('/api/transcribe', express.raw({ type: () => true, limit: MAX_AUDIO_BYTES }), async (req, res) => {
+  if (!GROQ_API_KEY) return res.status(503).json({ error: 'Transcription is not configured.' });
+
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGIN && origin && origin !== ALLOWED_ORIGIN) {
+    return res.status(403).json({ error: 'Forbidden origin.' });
+  }
+
+  const ip = (req.headers['x-forwarded-for']?.toString().split(',')[0] || req.ip || 'unknown').trim();
+  if (rateLimited(ip)) return res.status(429).json({ error: 'Too many requests.' });
+
+  const audio = req.body;
+  if (!Buffer.isBuffer(audio) || audio.length === 0) {
+    return res.status(400).json({ error: 'audio is required.' });
+  }
+
+  const contentType = (req.headers['content-type'] || 'audio/webm').toString();
+  const ext = contentType.includes('mp4') ? 'mp4' : contentType.includes('ogg') ? 'ogg' : 'webm';
+
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([audio], { type: contentType }), `audio.${ext}`);
+    form.append('model', GROQ_TRANSCRIBE_MODEL);
+    form.append('response_format', 'json');
+    const upstream = await fetch(GROQ_TRANSCRIBE_URL, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${GROQ_API_KEY}` },
+      body: form,
+    });
+    // Pass the response through verbatim; the client reads `{ text }`.
+    const text = await upstream.text();
+    res.status(upstream.status).type('application/json').send(text);
+  } catch {
+    res.status(502).json({ error: 'Upstream transcription failed.' });
+  }
+});
+
+// (2) Claude entry-summary proxy. Client sends only { transcript }.
 app.post('/api/anthropic/summary', async (req, res) => {
   if (!ANTHROPIC_API_KEY) return res.status(503).json({ error: 'AI summaries are not configured.' });
 
@@ -143,7 +172,7 @@ app.post('/api/anthropic/summary', async (req, res) => {
   }
 });
 
-// (3b) Claude weekly-review proxy. Client sends only { entries: string[] }.
+// (2b) Claude weekly-review proxy. Client sends only { entries: string[] }.
 app.post('/api/anthropic/weekly', async (req, res) => {
   if (!ANTHROPIC_API_KEY) return res.status(503).json({ error: 'AI summaries are not configured.' });
 
@@ -189,7 +218,7 @@ app.post('/api/anthropic/weekly', async (req, res) => {
   }
 });
 
-// (2) Static assets with cache headers.
+// (1) Static assets with cache headers.
 app.use(
   express.static(DIST, {
     index: false,
@@ -204,35 +233,18 @@ app.use(
   }),
 );
 
-// COI service worker registration snippet — injected into every HTML response
-// so that SharedArrayBuffer is available even inside Replit's preview iframe
-// (where the parent frame is not cross-origin isolated).
-//
-// Guards against infinite reload: sessionStorage tracks whether we've already
-// reloaded once after SW activation. If crossOriginIsolated is still false
-// after that reload, the parent context doesn't support it and we give up
-// gracefully rather than looping.
-const COI_SNIPPET = `<script>
-  (function() {
-    if (self.crossOriginIsolated) return; // already isolated, nothing to do
-    if (!('serviceWorker' in navigator)) return; // SW not supported
-    var RELOAD_KEY = '__coi_reloaded__';
-    // If we've already reloaded once for COI and it still didn't work, stop.
-    if (sessionStorage.getItem(RELOAD_KEY)) return;
-    navigator.serviceWorker.register('/coi-serviceworker.js').then(function(reg) {
-      function doReload() {
-        sessionStorage.setItem(RELOAD_KEY, '1');
-        location.reload();
-      }
-      if (reg.active) {
-        doReload();
-      } else {
-        (reg.installing || reg.waiting).addEventListener('statechange', function() {
-          if (this.state === 'activated') doReload();
-        });
-      }
-    });
-  })();
+// Cleanup snippet for browsers that visited before the sql.js migration:
+// earlier builds registered a cross-origin-isolation service worker
+// (coi-serviceworker.js) that intercepted every fetch. It's gone now, but a
+// registered SW outlives the page that installed it — unregister any SW on
+// this origin so stale copies stop rewriting responses. (The app registers
+// no other service workers.)
+const SW_CLEANUP_SNIPPET = `<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations()
+      .then(function(regs) { regs.forEach(function(reg) { reg.unregister(); }); })
+      .catch(function() {});
+  }
 <\/script>`;
 
 // SPA fallback (Express 5: no wildcard route string — use terminal middleware).
@@ -252,8 +264,7 @@ app.use((req, res, next) => {
   const htmlPath = path.join(DIST, 'index.html');
   try {
     let html = fs.readFileSync(htmlPath, 'utf8');
-    // Inject SW registration before </head> so it runs as early as possible.
-    html = html.replace('</head>', COI_SNIPPET + '</head>');
+    html = html.replace('</head>', SW_CLEANUP_SNIPPET + '</head>');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch {
@@ -275,7 +286,7 @@ let httpServer;
 
 function startListening() {
   httpServer = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`ECHO server listening on :${PORT} (COEP=${COEP_POLICY}, ai=${Boolean(ANTHROPIC_API_KEY)})`);
+    console.log(`ECHO server listening on :${PORT} (ai=${Boolean(ANTHROPIC_API_KEY)})`);
   });
 
   // Without this, a bind failure is an unhandled 'error' event on the

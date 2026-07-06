@@ -8,7 +8,7 @@ contradicts this document, flag it"), here are the intentional deviations.
 | # | Doc says | This build does | Why |
 |---|---|---|---|
 | 1 | RN + Expo (native) | Expo **universal** (react-native-web); routes under `src/app/` | Web first, no dev account yet; one codebase migrates to mobile |
-| 2 | Whisper via `whisper-rn` (native only) | **transformers.js** Whisper on web (`src/services/whisper.ts`), **loaded from a CDN at runtime** (not bundled — see below); `whisper.native.ts` is a stub for the native phase | whisper-rn can't run on web; transformers.js keeps audio on-device (preserves §2.1) |
+| 2 | Whisper via `whisper-rn` (native only) | **Server-side Groq Whisper** on web: `src/services/whisper.ts` uploads audio to the `/api/transcribe` proxy (`server/index.mjs`); `whisper.native.ts` is a stub for the native phase | whisper-rn can't run on web; on-device transformers.js proved unreliable (large model download + WASM OOM), so transcription moved server-side. **Trade-off: audio now leaves the device for transcription** — see §2.1 note below |
 | 3 | `expo-av` | **`expo-audio`** | expo-av is deprecated as of SDK 56 |
 | 4 | SQLCipher encryption at rest (§4.3) | **App-level field encryption** instead — opt-in AES-256-GCM (WebCrypto), key derived from a passphrase (PBKDF2). See "Encryption at rest" below | No SQLCipher in-browser; this is the web equivalent |
 | 5 | `bun` | **npm** | bun not installed locally |
@@ -17,19 +17,26 @@ contradicts this document, flag it"), here are the intentional deviations.
 | 8 | Template `NativeTabs` | standard Expo Router `Tabs` + vector icons | consistent web+native, no per-tab PNG assets |
 
 ## Web runtime requirements
-- `expo-sqlite` on web needs Metro wasm + COOP/COEP headers → handled in `metro.config.js`
-  for dev. **Production hosting must send the same `Cross-Origin-Opener-Policy: same-origin`
-  + `Cross-Origin-Embedder-Policy: require-corp` headers.**
-- transformers.js downloads the Whisper model on first use (cached in browser). WebGPU is
-  used when available, with a WASM fallback.
-- **transformers.js is loaded from a CDN at runtime, not bundled.** Its `onnxruntime-web`
-  dependency ships prebuilt `.mjs` files whose dynamic `import()` Metro can't parse, so
-  `expo export` fails the moment anything imports `whisper.ts`. `whisper.ts` therefore
-  pulls the library from `cdn.jsdelivr.net/.../@huggingface/transformers/+esm` via an
-  indirect `import()` hidden from Metro. The library + model weights are cross-origin, so
-  under `COEP: require-corp` they can be blocked — set `COEP_POLICY=credentialless`
-  (server/index.mjs) or self-host. This needs the same browser click-through as the model
-  download to confirm.
+- The web database is **sql.js (WASM SQLite) in a plain Web Worker**
+  (`src/db/sqlWorker.ts`, drizzle `sqlite-proxy` driver in `src/db/client.ts`),
+  persisted to IndexedDB. It needs **no COOP/COEP headers and no cross-origin
+  isolation** — which is what lets the app run inside Replit's preview iframe.
+  Native uses real `expo-sqlite` (`client.native.ts`); both apply the same
+  drizzle-kit migrations bundle. (The earlier wa-sqlite/SharedArrayBuffer setup
+  and its header/patch machinery were removed — see DEPLOY.md "History".)
+- sql.js is loaded from a CDN at runtime inside the worker (indirect `import()`
+  hidden from Metro).
+- **Transcription is server-side.** `whisper.ts` uploads the recorded audio blob
+  to the same-origin `/api/transcribe` proxy, which forwards it to Groq's hosted
+  Whisper (`whisper-large-v3-turbo`) with the key server-side and returns
+  `{ text }`. The earlier on-device transformers.js backend (Whisper via WASM,
+  model fetched from a CDN) was removed: the first-run model download was large
+  and WASM inference OOM'd on constrained devices.
+- **§2.1 privacy note:** audio is *stored* only on-device (IndexedDB) but is now
+  *transmitted* to the server for transcription (streamed through, never stored
+  server-side). The record screen + Settings copy reflect this ("transcribed
+  securely… never stored"), a deliberate change from the original on-device
+  guarantee.
 
 ## Voice capture loop (web) — record → transcribe → summarize
 - `hooks/useRecording.ts` (web): `MediaRecorder` lifecycle — mic permission, start/stop,
@@ -38,12 +45,15 @@ contradicts this document, flag it"), here are the intentional deviations.
   id (`audioPath = idb:<id>`); audio stays on-device. `audioStore.native.ts` stub will use
   the filesystem.
 - `app/(tabs)/record.tsx` orchestrates: stop → persist audio → `createEntry` (audio saved
-  **before** transcription so a Whisper failure can't lose the recording) → `transcribe` →
-  `updateEntry(transcript)` → `maybeSummarizeEntry` → open the entry.
+  **before** transcription so a transcription failure can't lose the recording) →
+  `transcribe` (uploads to `/api/transcribe`) → `updateEntry(transcript)` →
+  `maybeSummarizeEntry` → `push` to the entry (not `replace`, so the header back
+  button works). A transcription failure surfaces the real error to the user.
 - Playback: `components/AudioPlayer.web.tsx` (HTMLAudioElement off-DOM) in the entry detail;
   `AudioPlayer.tsx` is the native stub (renders nothing).
-- **Still needs a browser click-through** (mic + model download can't run in plain Node):
-  record → transcript appears → audio plays back, ideally on the deployed (COEP) URL.
+- **Still needs a browser click-through** (mic capture can't run in plain Node, and
+  `/api/transcribe` needs `GROQ_API_KEY` on the server): record → transcript appears →
+  audio plays back, ideally on the deployed URL.
 
 ## Encryption at rest (opt-in, web)
 - Default OFF (keeps the zero-friction path). Settings → Security → "Encrypt journal"
@@ -56,6 +66,28 @@ contradicts this document, flag it"), here are the intentional deviations.
   (marker-prefixed `enc:v1:` values; migrates existing rows on enable/disable).
 - **Current scope:** entry *transcripts* only. `ai_summaries` text and audio blobs are
   NOT yet encrypted — follow-up. Native should use SQLCipher (whole-DB) instead.
+
+## Analytical workbench (desktop) + operational telemetry direction
+The product is evolving beyond a diary into an **operational/cognitive telemetry**
+tool (heuristic, explicitly **non-clinical** — statuses like Nominal / Degraded /
+Overextended, never psychological labels). Layout is **mobile-first with an
+`isDesktop` 3-pane enhancement**:
+- **Mobile/tablet:** the clean single-column capture stream (`EntriesStream`,
+  extracted from the old `index.tsx`). The State Board is reached from the Home
+  header (pulse icon → `/state` sub-view).
+- **Desktop (`isDesktop`):** Home unfolds into `Workbench` — three fixed panes,
+  **State (left) | stream (center) | Telemetry (right)**, 1px hairline dividers,
+  no shadows, monospace metrics (`Fonts.mono`). Deliberately stark: **no
+  time-of-day tint** on the workbench (that warmth stays on mobile capture).
+- **State Board** (`components/workbench/StateBoard.tsx`): DOB capture →
+  `profileStore` (persisted like settings); live precise-age ticker,
+  days-since-last-pivot, and `MoodHeatmap` as the historical baseline. Age/day
+  math in `utils/dateHelpers.ts` (`preciseAgeYears`, `daysSince`).
+- **Telemetry Deck** (`TelemetryDeck.tsx`): **placeholder** — real shell/aesthetic,
+  but resting "Nominal" and explicit that live scoring is not online. The risk
+  engine (per-entry scoring + cross-entry 7/30-day aggregation + intervention
+  cards) is the next step; tokens live in `constants/theme.ts` (`TelemetryStatuses`,
+  `TelemetryColors`).
 
 ## Build config required by Drizzle's expo migrator (don't remove)
 - `metro.config.js`: `sql` added to `resolver.sourceExts` (migrations import `.sql`).
@@ -76,3 +108,14 @@ clean; `expo export --platform web` bundles. Browser click-through still pending
 
 Stubbed for their respective phases: data export (`export.ts`, Step 10), native Whisper
 (`whisper.native.ts`), native recording/persistence/playback (`*.native.ts`).
+
+## Dayora-parity features (added post-scaffold)
+- **Server-side transcription** (Groq) — see the deviation table row 2 above and DEPLOY.md.
+- **Energy tracking** — `EnergyPicker` (low/med/high → `entries.energy_level`, already in
+  the schema) captured in `compose.tsx`, shown on the entry detail beside mood.
+- **Time-aware theming** — `useTimeOfDay` + a subtle tint wash in `Screen.tsx` that shifts
+  morning → afternoon → evening → night (`TimeOfDayTints` in `constants/theme.ts`).
+- **AI follow-up question** — entry-summary prompt bumped to **v1.1** (adds a `follow_up`
+  field; client `constants/prompts.ts` and the server copy in `server/index.mjs` must stay
+  in sync). New `ai_summaries.follow_up` column (migration `0002`); shown as "To reflect
+  on" in `SummaryBlock`.

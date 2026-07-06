@@ -56,6 +56,7 @@
     "build:web": "node scripts/check-web-env.mjs && expo export --platform web",
     "serve": "node server/index.mjs",
     "deploy:local": "npm run build:web && npm run serve",
+    "start:replit": "node scripts/ensure-dist.mjs && npm run serve",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke-test.mjs"

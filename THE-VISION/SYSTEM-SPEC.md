@@ -10,10 +10,11 @@ A local-first voice journaling app: record a voice note, get an on-device
 Whisper transcript, optionally get an AI-generated three-part summary
 (Anthropic Claude), track daily habits, and see mood/streak insights over
 time. "Local-first" is the core architectural constraint: on web, all
-structured data lives in the browser (SQLite via WASM + OPFS), all audio
-blobs live in IndexedDB, and transcription runs client-side. Nothing about a
-journal entry's content is required to leave the device unless the user
-explicitly opts in to AI summaries.
+structured data lives in the browser (SQLite via WASM, running in a Web
+Worker, persisted to IndexedDB), all audio blobs live in IndexedDB, and
+transcription runs client-side. Nothing about a journal entry's content is
+required to leave the device unless the user explicitly opts in to AI
+summaries.
 
 ## Tech stack
 
@@ -25,7 +26,8 @@ explicitly opts in to AI summaries.
 | Native runtime | react-native | 0.85.3 |
 | Web runtime | react-native-web | ~0.21.0 |
 | ORM | drizzle-orm | ^0.45.2 |
-| Local DB (web) | expo-sqlite → wa-sqlite (WASM, OPFS) | ~56.0.5 |
+| Local DB (web) | sql.js (WASM SQLite) in a Web Worker, IndexedDB-persisted | 1.11.0 (CDN) |
+| Local DB (native) | expo-sqlite | ~56.0.5 |
 | State | zustand | ^5.0.14 |
 | Backend server | express | ^5.2.1 |
 | Language | TypeScript | ~6.0.3 |
@@ -55,11 +57,10 @@ about hook rules than plain React.
                          │              │ transcript       │
                          │              ▼                 │
                          │  ┌─────────────────────────┐  │       ┌─────────────────┐
-                         │  │ drizzle db (wa-sqlite/   │  │       │ server/index.mjs │
-                         │  │ OPFS) — entries, habits, │  │──────▶│ (Express, thin,  │
-                         │  │ ai_summaries, habit_logs │  │ HTTPS │  stateless)      │
-                         │  └─────────────────────────┘  │  only  │  proxies only    │
-                         │              ▲                 │  for   │  transcript text │
+                         │  │ drizzle db (sql.js       │  │       │ server/index.mjs │
+                         │  │ Worker/IndexedDB) —      │  │──────▶│ (Express, thin,  │
+                         │  │ entries, habits, etc.    │  │ HTTPS │  stateless)      │
+                         │              ▲                 │  only  │  proxies only    │
                          │              │ optional encrypt │  AI    │  to Anthropic    │
                          │  ┌─────────────────────────┐  │        └─────────────────┘
                          │  │ vault.ts (WebCrypto AES) │  │
@@ -141,11 +142,12 @@ Deliberately thin and stateless — see DEPLOY.md for the authoritative
 version of this, kept here for the system-spec summary:
 
 1. Serves the static `dist/` export (the built Expo web SPA).
-2. Sets `Cross-Origin-Opener-Policy: same-origin` and
-   `Cross-Origin-Embedder-Policy: <COEP_POLICY>` (default `credentialless`)
-   on every response — required for wa-sqlite's `SharedArrayBuffer` usage.
-   **This only takes effect for a real top-level navigation** — see
-   `STARTUP-AND-BOOT.md` for why this breaks inside an iframe.
+2. Sends **no cross-origin-isolation headers**. The web database (sql.js in
+   a plain Web Worker) needs no `SharedArrayBuffer`, so there's nothing to
+   enable — see "History" in `DEPLOY.md` for why that used to be here and
+   why it was removed. A leftover `<script>` snippet unregisters any service
+   worker from the pre-migration COI setup that might still be installed in
+   a returning visitor's browser.
 3. Proxies two Claude endpoints (`/api/anthropic/summary`,
    `/api/anthropic/weekly`) so `ANTHROPIC_API_KEY` never reaches the client
    bundle. Both are rate-limited in-memory (20 req/min/IP, resets on scale
@@ -168,10 +170,15 @@ out of scope here — they don't affect correctness today.
 
 ## Platform-specific caveats
 
-- `expo-sqlite`'s **web** support is alpha per Expo's own SDK 56 docs — the
-  entire wa-sqlite/OPFS layer this app depends on for web storage is
-  explicitly flagged upstream as "may be unstable." See
-  `STARTUP-AND-BOOT.md` for the concrete failure mode this causes.
+- Web storage moved off `expo-sqlite` (wa-sqlite/OPFS, alpha per Expo's own
+  SDK 56 docs and dependent on `SharedArrayBuffer`) to **sql.js** running in
+  a plain Web Worker, persisted to IndexedDB (`src/db/sqlWorker.ts`). This
+  was a direct fix for Replit's preview iframe, which can never grant
+  cross-origin isolation to a framed page — see `STARTUP-AND-BOOT.md`'s
+  "Bug #2" for the failure this caused under the old architecture, and
+  `DEPLOY.md`'s "History" section for the full rationale. Native
+  (iOS/Android) is unaffected — still real `expo-sqlite`
+  (`src/db/client.native.ts`).
 - `transformers.js` (Whisper) is loaded from a CDN at runtime, not bundled —
   its `onnxruntime-web` dependency uses dynamic `import()` patterns Metro
   can't statically bundle. This is intentional (see comment in

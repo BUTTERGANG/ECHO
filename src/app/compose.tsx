@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 
+import { EnergyPicker } from '@/components/EnergyPicker';
 import { MoodPicker } from '@/components/MoodPicker';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
@@ -28,6 +29,7 @@ export default function ComposeScreen() {
 
   const [text, setText] = useState('');
   const [mood, setMood] = useState<number | null>(null);
+  const [energy, setEnergy] = useState<number | null>(null);
   const [isPrivate, setIsPrivate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +44,7 @@ export default function ComposeScreen() {
       const entry = await createEntry({
         transcript: text.trim(),
         moodScore: mood ?? undefined,
+        energyLevel: energy ?? undefined,
         isPrivate: isPrivate ? 1 : 0,
       });
       prependEntry(entry);
@@ -77,6 +80,10 @@ export default function ComposeScreen() {
 
         <View style={styles.moodWrap}>
           <MoodPicker value={mood} onChange={setMood} />
+        </View>
+
+        <View style={styles.moodWrap}>
+          <EnergyPicker value={energy} onChange={setEnergy} />
         </View>
 
         <View style={[styles.privateRow, { borderColor: theme.border }]}>

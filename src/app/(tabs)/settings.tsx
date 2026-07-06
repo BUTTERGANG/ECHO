@@ -135,8 +135,8 @@ export default function SettingsScreen() {
         />
       </Card>
       <Text style={[styles.note, { color: theme.textSecondary }]}>
-        Audio never leaves this device and transcription runs locally. Entries marked private are
-        excluded from all AI analysis and sync.
+        Recordings are transcribed securely on our server and are never stored. Entries marked
+        private are excluded from all AI analysis and sync.
       </Text>
 
       {Platform.OS === 'web' ? (
@@ -171,31 +171,38 @@ export default function SettingsScreen() {
         </>
       ) : null}
 
-      <SectionHeader title="Transcription model" />
-      <View style={styles.segment}>
-        {WHISPER_MODELS.map((m) => {
-          const selected = whisperModel === m;
-          return (
-            <Pressable
-              key={m}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              accessibilityLabel={`Transcription model ${m}`}
-              onPress={() => setWhisperModel(m)}
-              style={[
-                styles.segmentItem,
-                { backgroundColor: selected ? theme.accent : theme.backgroundElement },
-              ]}>
-              <Text style={[styles.segmentText, { color: selected ? theme.accentText : theme.text }]}>
-                {m}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-      <Text style={[styles.note, { color: theme.textSecondary }]}>
-        Larger models are more accurate but need more memory. Default is “small”.
-      </Text>
+      {/* On web, transcription runs on the server, which selects the model —
+          the on-device size picker only applies to the native build. */}
+      {Platform.OS !== 'web' ? (
+        <>
+          <SectionHeader title="Transcription model" />
+          <View style={styles.segment}>
+            {WHISPER_MODELS.map((m) => {
+              const selected = whisperModel === m;
+              return (
+                <Pressable
+                  key={m}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={`Transcription model ${m}`}
+                  onPress={() => setWhisperModel(m)}
+                  style={[
+                    styles.segmentItem,
+                    { backgroundColor: selected ? theme.accent : theme.backgroundElement },
+                  ]}>
+                  <Text
+                    style={[styles.segmentText, { color: selected ? theme.accentText : theme.text }]}>
+                    {m}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={[styles.note, { color: theme.textSecondary }]}>
+            Larger models are more accurate but need more memory. Default is “small”.
+          </Text>
+        </>
+      ) : null}
 
       <SectionHeader title="Your data" />
       <Card padded={false} style={styles.group}>

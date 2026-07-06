@@ -5,15 +5,33 @@ screen," and the specific white-screen failures found and fixed while
 tracing it. Read `SYSTEM-SPEC.md` first for the architecture; this file is
 about *sequence and failure modes*, not structure.
 
+> **Superseded (partially): Bugs #1 and #2 below no longer apply.** They were
+> both consequences of `expo-sqlite`'s web backend (wa-sqlite), which
+> depended on a synchronous, `SharedArrayBuffer`-based busy-wait. Web storage
+> has since moved to **sql.js in a plain Web Worker**, persisted to
+> IndexedDB (`src/db/sqlWorker.ts`, `src/db/client.ts`) — an async
+> message-passing driver with no `SharedArrayBuffer`/cross-origin-isolation
+> dependency at all, so there is no busy-wait to race and no iframe
+> restriction to hit. See `DEPLOY.md`'s "History" section for the full
+> rationale. The two sections are kept below as a historical record of the
+> failure modes that drove the migration — Bug #3 (port race) is unrelated
+> and still current.
+
 ## The script chain
 
 `package.json` scripts, in the order they actually get called:
 
 ```
-build:web  = node scripts/check-web-env.mjs && expo export --platform web
-serve      = node server/index.mjs
+build:web    = node scripts/check-web-env.mjs && expo export --platform web
+serve        = node server/index.mjs
 deploy:local = npm run build:web && npm run serve
+start:replit = node scripts/ensure-dist.mjs && npm run serve
 ```
+
+The Replit Run button now uses `start:replit`, not `deploy:local`:
+`ensure-dist.mjs` only re-runs `build:web` when a source file is newer than
+`dist/index.html`, so restarting the Repl doesn't pay for a full re-export
+every time (see comment in `scripts/ensure-dist.mjs`).
 
 `check-web-env.mjs` is a pre-build guard, not part of the app's runtime — it
 fails the build if `EXPO_PUBLIC_ANTHROPIC_API_KEY` is set anywhere reachable
@@ -25,7 +43,7 @@ guard against a real secret-leak class of bug, not boot-sequence code.
 not the same thing:
 
 ```toml
-run = "npm run deploy:local"          # dev: the Repl's "Run" button
+run = "npm run start:replit"          # dev: the Repl's "Run" button
 
 [deployment]
 build = ["sh", "-c", "npm ci && npm run build:web"]
@@ -40,7 +58,7 @@ pick up the change until it's redeployed, and vice versa. Worth keeping
 straight when debugging "I fixed it but it's still broken" — check *which*
 of the two you're actually looking at.
 
-The `[[ports]]` section maps `localPort = 3000` (where `server/index.mjs`
+The `[[ports]]` section maps `localPort = 5000` (where `server/index.mjs`
 binds, via `PORT` env) to `externalPort = 80`. Replit's port-forwarding list
 is managed by Replit's own tooling based on what it detects listening, not
 purely a static file you hand-edit — don't be surprised if entries appear or
@@ -49,8 +67,9 @@ disappear here that don't trace to a deliberate change in this repo.
 ## Boot sequence, end to end
 
 1. **Server process starts** (`node server/index.mjs`): binds `PORT`
-   (default 3000), sets COOP/COEP headers on every response, serves
-   `dist/index.html` for `/` and any non-API GET/HEAD (SPA fallback).
+   (default 3000, but the Repl workflow sets `PORT=5000`), serves
+   `dist/index.html` for `/` and any non-API GET/HEAD (SPA fallback). No
+   cross-origin-isolation headers are sent (see superseded-bugs note above).
 2. **Browser requests `/`**: gets `index.html`, which `<script defer>`-loads
    the single hashed JS bundle (`_expo/static/js/web/entry-<hash>.js`).
 3. **Bundle evaluates, top to bottom, before React exists.** This is the
@@ -215,10 +234,10 @@ successfully and served `/healthz` correctly, with no manual intervention.
   `document.getElementById('root').innerHTML.length > 0` plus zero
   `Runtime.exceptionThrown` events. That would have caught Bug #1 directly
   and would catch the next silent-boot-failure class before it ships.
-- **The underlying `openDatabaseSync` race is still unresolved**, only
-  now visible instead of silent. If cold-boot DB failures turn out to be
-  common in production (not just this analysis container), the real fix
-  is migrating the web query path to `openDatabaseAsync`.
+- ~~The underlying `openDatabaseSync` race is still unresolved~~ — resolved
+  by the sql.js migration (see superseded-bugs note at the top of this
+  file). The web query path is now fully async end to end, so there's no
+  busy-wait left to race.
 - `ai_summaries` text and audio blobs are still unencrypted even with the
   vault enabled (see SYSTEM-SPEC.md) — unrelated to boot, but adjacent and
   already flagged in WEB_FIRST_NOTES.md as a known gap.

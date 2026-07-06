@@ -30,6 +30,7 @@ export interface EntrySummary {
   whatSaid: string;
   unseen: string;
   action: string;
+  followUp: string;
 }
 
 export interface EntrySummaryResult {
@@ -59,6 +60,7 @@ function parseSummary(text: string): EntrySummary {
     whatSaid: String(parsed.what_said ?? ''),
     unseen: String(parsed.unseen ?? ''),
     action: String(parsed.action ?? ''),
+    followUp: String(parsed.follow_up ?? ''),
   };
 }
 

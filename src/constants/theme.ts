@@ -49,6 +49,12 @@ export const Colors = {
 export const MoodColors = ['#9AA0A6', '#E5675F', '#E8A04D', '#E6C84F', '#8FBF63', '#5BB372'] as const;
 export const MoodEmoji = ['', '😞', '😕', '😐', '🙂', '😄'] as const;
 
+/** Energy level (1–3 = low/medium/high). Index 0 is an unused placeholder so
+ * the arrays are addressable by the stored 1-based level, like MoodColors. */
+export const EnergyLabels = ['', 'Low', 'Medium', 'High'] as const;
+export const EnergyColors = ['#9AA0A6', '#7C9CF6', '#E8A04D', '#5BB372'] as const;
+export const EnergyIcons = ['', 'battery-dead-outline', 'battery-half-outline', 'battery-full-outline'] as const;
+
 export const Radii = {
   sm: 8,
   md: 12,
@@ -62,6 +68,38 @@ export const Breakpoints = {
   tablet: 600,
   desktop: 1024,
 } as const;
+
+/**
+ * Time-of-day accent tints. Applied as a very-low-opacity wash behind screen
+ * content (see Screen.tsx / useTimeOfDay), so the app subtly warms in the
+ * morning, cools through the afternoon, and settles into evening/night.
+ */
+export const TimeOfDayTints = {
+  morning: '#F5A623', // warm amber
+  afternoon: '#4F7CFF', // clear blue
+  evening: '#E8743B', // sunset orange
+  night: '#3B4CCA', // deep indigo
+} as const;
+export type TimeOfDay = keyof typeof TimeOfDayTints;
+
+/**
+ * Operational telemetry statuses for the workbench Risk deck. These are
+ * heuristic, NON-CLINICAL system-state indicators (cognitive load / velocity),
+ * deliberately worded like telemetry rather than psychological labels. Ordered
+ * low → high concern.
+ */
+export const TelemetryStatuses = ['Nominal', 'Guarded', 'Degraded', 'Overextended', 'Critical'] as const;
+export type TelemetryStatus = (typeof TelemetryStatuses)[number];
+export const TelemetryColors: Record<TelemetryStatus, string> = {
+  Nominal: '#5BB372',
+  Guarded: '#8FBF63',
+  Degraded: '#E8A04D',
+  Overextended: '#E5675F',
+  Critical: '#E5484D',
+};
+
+/** Hairline divider width for the analytical workbench (stark 1px, no shadows). */
+export const Hairline = 1;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 

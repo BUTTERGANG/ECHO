@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Switch, Text, View } from 'react-native';
@@ -7,7 +8,7 @@ import { SummaryBlock } from '@/components/SummaryBlock';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Screen } from '@/components/ui/Screen';
-import { MoodColors, MoodEmoji } from '@/constants/theme';
+import { EnergyColors, EnergyIcons, EnergyLabels, MoodColors, MoodEmoji } from '@/constants/theme';
 import { getEntry, softDeleteEntry, updateEntry } from '@/db/queries/entries';
 import { getSummaryByEntryId } from '@/db/queries/summaries';
 import type { AiSummary, Entry } from '@/db/schema';
@@ -87,12 +88,20 @@ export default function EntryDetailScreen() {
 
       <View style={styles.headerRow}>
         <Text style={[styles.date, { color: theme.textSecondary }]}>{formatWhen(entry.createdAt)}</Text>
-        {entry.moodScore ? (
-          <View style={[styles.moodChip, { backgroundColor: MoodColors[entry.moodScore] }]}>
-            <Text style={styles.moodEmoji}>{MoodEmoji[entry.moodScore]}</Text>
-            <Text style={styles.moodNum}>{entry.moodScore}/5</Text>
-          </View>
-        ) : null}
+        <View style={styles.chips}>
+          {entry.moodScore ? (
+            <View style={[styles.chip, { backgroundColor: MoodColors[entry.moodScore] }]}>
+              <Text style={styles.moodEmoji}>{MoodEmoji[entry.moodScore]}</Text>
+              <Text style={styles.chipText}>{entry.moodScore}/5</Text>
+            </View>
+          ) : null}
+          {entry.energyLevel ? (
+            <View style={[styles.chip, { backgroundColor: EnergyColors[entry.energyLevel] }]}>
+              <Ionicons name={EnergyIcons[entry.energyLevel] as keyof typeof Ionicons.glyphMap} size={13} color="#1A1D23" />
+              <Text style={styles.chipText}>{EnergyLabels[entry.energyLevel]}</Text>
+            </View>
+          ) : null}
+        </View>
       </View>
 
       <Card style={styles.transcriptCard}>
@@ -143,9 +152,10 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 },
   date: { fontSize: 14, fontWeight: '500', flex: 1 },
-  moodChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
+  chips: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
   moodEmoji: { fontSize: 14 },
-  moodNum: { fontSize: 13, fontWeight: '700', color: '#1A1D23' },
+  chipText: { fontSize: 13, fontWeight: '700', color: '#1A1D23' },
   transcriptCard: { marginBottom: 12 },
   transcript: { fontSize: 17, lineHeight: 26 },
   transcriptMuted: { fontStyle: 'italic' },

@@ -6,7 +6,7 @@
  * outputs remain auditable against the prompt that produced them.
  */
 
-export const ENTRY_SUMMARY_PROMPT_VERSION = 'v1.0';
+export const ENTRY_SUMMARY_PROMPT_VERSION = 'v1.1';
 export const PATTERN_EXTRACTION_PROMPT_VERSION = 'v1.0';
 export const WEEKLY_REVIEW_PROMPT_VERSION = 'v1.0';
 
@@ -16,10 +16,11 @@ You will receive a raw voice journal transcript — stream of consciousness, une
 
 Respond ONLY with a JSON object. No preamble, no markdown, no explanation outside the JSON.
 
-The JSON must have exactly these three fields:
+The JSON must have exactly these four fields:
 - "what_said": A 2-3 sentence neutral summary of what the person expressed. Mirror their language and emotional tone. Do not editorialize.
 - "unseen": One observation about a subtle pattern, contradiction, or subtext that the person may not have consciously noticed. Be specific and grounded — only flag something genuinely present in the text. If nothing meaningful is there, say "Nothing stood out beyond what you already expressed clearly."
 - "action": One concrete, small, optional action the person could take today — or "No action needed" if the entry was purely reflective. Must be actionable in under 10 minutes.
+- "follow_up": One specific, open-ended question that invites the person to go deeper on something concrete they raised. Ground it in their actual words, not a generic prompt. Warm, single sentence.
 
 Keep each field under 100 words. Never fabricate details not present in the transcript.`;
 

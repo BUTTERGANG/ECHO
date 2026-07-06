@@ -4,6 +4,7 @@ import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 
 import { MaxContentWidth } from '@/constants/theme';
 import { useResponsive } from '@/hooks/useResponsive';
+import { useTimeOfDay } from '@/hooks/useTimeOfDay';
 import { useTheme } from '@/hooks/use-theme';
 
 interface ScreenProps {
@@ -32,6 +33,7 @@ export function Screen({
 }: ScreenProps) {
   const theme = useTheme();
   const { gutter } = useResponsive();
+  const { tint } = useTimeOfDay();
 
   const inner = (
     <View
@@ -47,6 +49,10 @@ export function Screen({
 
   return (
     <SafeAreaView style={[styles.fill, { backgroundColor: theme.background }]} edges={edges}>
+      {/* Time-of-day wash: subtle, non-interactive, behind all content. */}
+      {tint ? (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.tint, { backgroundColor: tint }]} />
+      ) : null}
       {scroll ? (
         <ScrollView
           contentContainerStyle={styles.scrollContent}
@@ -62,6 +68,7 @@ export function Screen({
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
+  tint: { opacity: 0.08 },
   center: { flex: 1, alignItems: 'center' },
   scrollContent: { alignItems: 'center', flexGrow: 1, paddingVertical: 16 },
   column: { width: '100%' },

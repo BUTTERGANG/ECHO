@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/ui/Card';
+import { Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { AiSummary } from '@/db/schema';
 
@@ -33,6 +34,15 @@ export function SummaryBlock({ summary }: { summary: AiSummary }) {
           </View>
         );
       })}
+      {summary.followUp ? (
+        <View style={[styles.followUp, { backgroundColor: theme.accentSoft }]}>
+          <View style={styles.partHeader}>
+            <Ionicons name="help-circle-outline" size={15} color={theme.accent} />
+            <Text style={[styles.partTitle, { color: theme.accent }]}>To reflect on</Text>
+          </View>
+          <Text style={[styles.partBody, { color: theme.text }]}>{summary.followUp}</Text>
+        </View>
+      ) : null}
     </Card>
   );
 }
@@ -45,4 +55,5 @@ const styles = StyleSheet.create({
   partHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   partTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
   partBody: { fontSize: 15, lineHeight: 22 },
+  followUp: { gap: 6, padding: 12, borderRadius: Radii.md },
 });

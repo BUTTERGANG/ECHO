@@ -23,6 +23,7 @@ export async function maybeSummarizeEntry(entry: Entry, aiEnabled: boolean): Pro
       whatSaid: result.summary.whatSaid,
       unseen: result.summary.unseen,
       action: result.summary.action,
+      followUp: result.summary.followUp,
       rawResponse: result.raw,
       promptVersion: result.promptVersion,
     });

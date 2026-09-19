@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { HabitRow } from '@/components/HabitRow';
 import { Button } from '@/components/ui/Button';
@@ -39,7 +39,11 @@ export default function HabitsScreen() {
           : `${doneToday} of ${views.length} done today`}
       </Text>
 
-      {!loading && views.length === 0 ? (
+      {loading && views.length === 0 ? (
+        <View style={styles.loading}>
+          <ActivityIndicator color={theme.textSecondary} />
+        </View>
+      ) : !loading && views.length === 0 ? (
         <EmptyState
           icon="checkbox-outline"
           title="No habits yet"
@@ -89,6 +93,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 26, fontWeight: '700' },
   subtitle: { fontSize: 15, lineHeight: 21, marginTop: 4, marginBottom: 8 },
   list: { paddingHorizontal: 16, marginTop: 8 },
+  loading: { paddingVertical: 32, alignItems: 'center' },
   addRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   input: {
     flex: 1,

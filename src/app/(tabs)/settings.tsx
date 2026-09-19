@@ -61,7 +61,7 @@ export default function SettingsScreen() {
       const fileName = await exportAllData();
       Alert.alert('Export complete', `Your data was downloaded as ${fileName}.`);
     } catch (e) {
-      Alert.alert('Export failed', e instanceof Error ? e.message : String(e));
+      Alert.alert('Export failed', 'We couldn\'t export your data. Please try again.');
     }
   };
 
@@ -81,7 +81,7 @@ export default function SettingsScreen() {
               setEntries([]);
               Alert.alert('Deleted', 'All of your data has been erased from this device.');
             } catch (e) {
-              Alert.alert('Delete failed', e instanceof Error ? e.message : String(e));
+              Alert.alert('Delete failed', 'We couldn\'t delete your data. Please try again.');
             }
           },
         },
@@ -106,7 +106,7 @@ export default function SettingsScreen() {
             await decryptAllTranscripts(); // must run while still unlocked
             await disableEncryption();
           } catch (e) {
-            Alert.alert('Encryption', e instanceof Error ? e.message : String(e));
+            Alert.alert('Encryption', 'We couldn\'t turn off encryption. Please try again.');
           }
         },
       },

@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EntryCard } from '@/components/EntryCard';
 import { StreakBadge } from '@/components/StreakBadge';
@@ -35,6 +36,7 @@ function greeting(): string {
 export function EntriesStream({ columns: columnsOverride }: { columns?: number } = {}) {
   const theme = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { entries, loading, error, refresh } = useEntries();
   const streak = useStreak();
   const responsive = useResponsive();
@@ -149,7 +151,11 @@ export function EntriesStream({ columns: columnsOverride }: { columns?: number }
         accessibilityRole="button"
         accessibilityLabel="New entry"
         onPress={() => router.push('/compose')}
-        style={({ pressed }) => [styles.fab, { backgroundColor: theme.accent }, pressed && styles.fabPressed]}>
+        style={({ pressed }) => [
+          styles.fab,
+          { backgroundColor: theme.accent, bottom: 24 + insets.bottom },
+          pressed && styles.fabPressed,
+        ]}>
         <Ionicons name="add" size={28} color={theme.accentText} />
       </Pressable>
     </View>
@@ -192,7 +198,6 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 24,
     width: 56,
     height: 56,
     borderRadius: Radii.pill,
